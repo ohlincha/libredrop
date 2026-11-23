@@ -1,0 +1,53 @@
+name: Build and tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # (each platform is its own job: one failing doesn't cancel the others)
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake ninja-build qt6-base-dev libeigen3-dev libgl1-mesa-dev
+      - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build
+      - run: ctest --test-dir build --output-on-failure
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jurplel/install-qt-action@v4
+        with: { version: "6.8.3", arch: win64_msvc2022_64, cache: true }
+      - run: vcpkg install eigen3 --triplet x64-windows
+      - uses: ilammy/msvc-dev-cmd@v1
+      - run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows
+      - run: cmake --build build
+      - name: Tests
+        run: |
+          ctest --test-dir build --output-on-failure
+          if ($LASTEXITCODE -ne 0) {
+            foreach ($t in (ctest --test-dir build -N | Select-String "Test +#\d+: (\S+)" | % { $_.Matches[0].Groups[1].Value })) {
+              & "build\$t.exe" -o "$t.txt,txt" 2>&1 | Out-Host
+              if ($LASTEXITCODE -ne 0) { Get-Content "$t.txt" | Select-String -NotMatch "^PASS" | Out-Host }
+            }
+            exit 1
+          }
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jurplel/install-qt-action@v4
+        with: { version: "6.8.3", cache: true }
+      - run: brew install eigen ninja
+      - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build
+      - run: ctest --test-dir build --output-on-failure
