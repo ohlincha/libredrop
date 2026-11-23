@@ -1,0 +1,1 @@
+- 2026-11-23: project started; separator measurement plan; methods verified on synthetic drops; first recordings planned.

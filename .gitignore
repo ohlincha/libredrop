@@ -1,0 +1,4 @@
+build/
+*.mkv
+*.png
+!docs/*.png
