@@ -1,4 +1,4 @@
-# LibreDrop
+# <img src="docs/icon.png" width="48" align="center"> LibreDrop
 
 Open contact-angle and drop-shape analysis for backlit side views (developed for an Ossila contact angle
 goniometer). The main application is the wetting of battery separators by water, organic carbonates and
