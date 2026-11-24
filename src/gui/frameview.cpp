@@ -58,6 +58,17 @@ void FrameView::paintEvent(QPaintEvent*) {
     QFont f = font();
     f.setBold(true);
     p.setFont(f);
+    {   // label at the left end
+        const QPointF e = map(0, bl.p0.y - tn * bl.p0.x);
+        const QString label = tr("surface");
+        const QRectF tb(e.x() + 4, e.y() - p.fontMetrics().height() - 3,
+                        p.fontMetrics().horizontalAdvance(label) + 6, p.fontMetrics().height());
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0, 0, 0, 140));
+        p.drawRoundedRect(tb, 3, 3);
+        p.setPen(QColor(255, 200, 0));
+        p.drawText(tb, Qt::AlignCenter, label);
+    }
     for (int i = 0; i < int(scene_->drops.size()); ++i) {
         const ld::SceneDrop& d = scene_->drops[std::size_t(i)];
         const int id = i < ids_.size() ? ids_[i] : 0;
