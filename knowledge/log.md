@@ -1,1 +1,2 @@
 - 2026-11-23: project started; separator measurement plan; methods verified on synthetic drops; first recordings planned.
+- 2026-11-24: camera scale per video mode from the 10 mm calibration sphere (knowledge/camera-scale.md); beryllium lacks python3-opencv (capture script needs it).
