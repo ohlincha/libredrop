@@ -1,4 +1,5 @@
 // Contact angles of synthetic drops of known angle and shape, and the checks.
+#include <QImage>
 #include <QtTest>
 #include <cmath>
 
@@ -131,6 +132,32 @@ private slots:
         const DropAnalysis a = run(d);
         QVERIFY(std::abs(a.volumePx3 / v - 1) < 0.01);
         QVERIFY(std::abs(a.heightPx - h) < 1.0);
+    }
+
+    // real frames from the Ossila goniometer (2026-11-24, beryllium): water on a glass slide and on Scotch tape,
+    // backlit, the surface bright with the drop's reflection below it (no dark substrate)
+    void realReflection_data() {
+        QTest::addColumn<QString>("file");
+        QTest::addColumn<double>("theta");
+        QTest::newRow("glass") << "water_glass_28deg.png" << 28.5;   // circle fit by hand: 28.8, cap 28.5
+        QTest::newRow("tape") << "water_tape_88deg.png" << 88.0;     // by hand: 87.5-92.4 for a +-3 px baseline
+    }
+    void realReflection() {
+        QFETCH(QString, file);
+        QFETCH(double, theta);
+        QImage img(QStringLiteral(TEST_DATA "/") + file);
+        QVERIFY(!img.isNull());
+        DropOptions o;
+        o.pxPerMm = 94.23, o.densityDiff = 997, o.surfaceTension = 72;
+        const DropAnalysis a = analyzeDrop(fromQImage(img), o);
+        QVERIFY2(a.ok, qPrintable(a.error));
+        QVERIFY(a.baseline.reflection);
+        for (const char* m : {"young-laplace", "circle", "height-width"}) {
+            const AngleResult* r = a.method(QString::fromLatin1(m));
+            QVERIFY2(r && r->ok && std::abs(r->mean() - theta) < 2.5,
+                     qPrintable(QString("%1: %2").arg(m).arg(r ? r->mean() : -1)));
+            QVERIFY2(r->rmsPx < 0.5 || !std::isfinite(r->rmsPx), m);
+        }
     }
 };
 

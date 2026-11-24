@@ -3,7 +3,10 @@
 //
 // 1. Levels: background (bright) and drop/substrate (dark) from the histogram; threshold half-way.
 // 2. Baseline: the substrate's top edge in the outer columns of the image (left and right of the drop),
-//    a straight line fitted to both sides. A manual baseline can be given instead.
+//    a straight line fitted to both sides. Where the substrate is not dark (a bright glass or film surface seen
+//    at grazing incidence, with the drop's mirror image below it), the contact points are the corners where the
+//    drop's silhouette meets its reflection: for each side the outermost point of the drop + reflection outline
+//    (θ ≤ 90°) or the neck between the two bulges (θ > 90°). A manual baseline can be given instead.
 // 3. Outline: sub-pixel threshold crossings along rows (sides) and columns (top) of the dark region standing
 //    on the baseline. A dark column reaching the top of the image is the needle; its rows are left out.
 // 4. Methods, all in the baseline frame (u along the baseline, v height above it), on points more than
@@ -35,6 +38,7 @@ struct Baseline {
     double rmsPx = 0;      // scatter of the substrate edge about the line
     bool found = false;
     bool oneSide = false;  // the substrate was visible on one side of the drop only
+    bool reflection = false;   // from the drop/reflection contact points (no dark substrate)
     Pt toUv(Pt p) const;   // image → baseline frame (u along, v up)
     Pt toImage(Pt uv) const;
 };

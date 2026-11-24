@@ -119,6 +119,122 @@ Baseline findBaseline(const GrayImage& im, double T) {
     return bl;
 }
 
+// Contact points from the drop and its reflection (bright substrate). The dark blob standing on the surface is
+// the drop plus its mirror image; on each side the contact point is where the outline has its corner: the
+// outermost point (θ ≤ 90°), or the innermost point of a neck between two bulges (θ > 90°).
+Baseline findReflectionBaseline(const GrayImage& im, double T) {
+    Baseline bl;
+    const int W = im.w, H = im.h;
+    // connected dark components (4-neighbour flood fill)
+    std::vector<int> lab(std::size_t(W) * H, 0);
+    struct Comp {
+        int n = 0, x0 = 1 << 30, x1 = -1, y0 = 1 << 30, y1 = -1;
+    };
+    std::vector<Comp> comps(1);
+    std::vector<int> stack;
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x) {
+            if (im.at(x, y) >= T || lab[std::size_t(y) * W + x]) continue;
+            const int id = int(comps.size());
+            comps.emplace_back();
+            Comp& c = comps.back();
+            stack.assign(1, y * W + x);
+            lab[std::size_t(y) * W + x] = id;
+            while (!stack.empty()) {
+                const int k = stack.back();
+                stack.pop_back();
+                const int cx = k % W, cy = k / W;
+                ++c.n;
+                c.x0 = std::min(c.x0, cx), c.x1 = std::max(c.x1, cx), c.y0 = std::min(c.y0, cy), c.y1 = std::max(c.y1, cy);
+                const int nb[4][2] = {{cx - 1, cy}, {cx + 1, cy}, {cx, cy - 1}, {cx, cy + 1}};
+                for (const auto& q : nb)
+                    if (q[0] >= 0 && q[0] < W && q[1] >= 0 && q[1] < H && im.at(q[0], q[1]) < T &&
+                        !lab[std::size_t(q[1]) * W + q[0]]) {
+                        lab[std::size_t(q[1]) * W + q[0]] = id;
+                        stack.push_back(q[1] * W + q[0]);
+                    }
+            }
+        }
+    // the drop: the largest blob not touching the bottom or both sides (that is the substrate or stage)
+    int best = 0;
+    for (int i = 1; i < int(comps.size()); ++i) {
+        const Comp& c = comps[std::size_t(i)];
+        if (c.y1 >= H - 1 || (c.x0 == 0 && c.x1 == W - 1) || c.n < 50) continue;
+        if (!best || c.n > comps[std::size_t(best)].n) best = i;
+    }
+    if (!best) return bl;
+    const Comp& c = comps[std::size_t(best)];
+    // per row: outermost dark pixel of the blob on each side (sub-pixel threshold crossing)
+    const int n = c.y1 - c.y0 + 1;
+    std::vector<double> L(static_cast<std::size_t>(n), kNaN), R(static_cast<std::size_t>(n), kNaN);
+    for (int y = c.y0; y <= c.y1; ++y) {
+        int l = -1, r = -1;
+        for (int x = c.x0; x <= c.x1; ++x)
+            if (lab[std::size_t(y) * W + x] == best) {
+                if (l < 0) l = x;
+                r = x;
+            }
+        if (l < 0) continue;
+        const std::size_t i = std::size_t(y - c.y0);
+        const double al = l > 0 ? im.at(l - 1, y) : T, cl = im.at(l, y);
+        const double ar = r < W - 1 ? im.at(r + 1, y) : T, cr = im.at(r, y);
+        L[i] = al > cl ? l - 1 + (al - T) / (al - cl) : l;
+        R[i] = ar > cr ? r + (cr - T) / (cr - ar) : r;
+    }
+    // e(y): how far the outline reaches out on one side; the contact row is its corner
+    auto corner = [&](const std::vector<double>& e, double* yOut) {
+        const double minDepth = 3.0;
+        double bestDepth = 0;
+        int neck = -1;
+        std::vector<double> up(std::size_t(n), -1e9), down(std::size_t(n), -1e9);
+        for (int i = 0; i < n; ++i) up[std::size_t(i)] = std::max(i ? up[std::size_t(i - 1)] : -1e9, std::isfinite(e[std::size_t(i)]) ? e[std::size_t(i)] : -1e9);
+        for (int i = n - 1; i >= 0; --i)
+            down[std::size_t(i)] = std::max(i < n - 1 ? down[std::size_t(i + 1)] : -1e9, std::isfinite(e[std::size_t(i)]) ? e[std::size_t(i)] : -1e9);
+        for (int i = 1; i < n - 1; ++i) {
+            if (!std::isfinite(e[std::size_t(i)])) continue;
+            const double d = std::min(up[std::size_t(i - 1)], down[std::size_t(i + 1)]) - e[std::size_t(i)];
+            if (d > bestDepth) bestDepth = d, neck = i;
+        }
+        int k = -1;
+        if (neck >= 0 && bestDepth >= std::max(minDepth, 0.03 * up[std::size_t(n - 1)])) {
+            k = neck;   // θ > 90°: the neck between drop and reflection
+            // refine: parabola through the minimum
+        } else {
+            double m = -1e9;
+            for (int i = 0; i < n; ++i)
+                if (std::isfinite(e[std::size_t(i)]) && e[std::size_t(i)] > m) m = e[std::size_t(i)], k = i;
+        }
+        if (k <= 0 || k >= n - 1) return false;   // a reflection must be visible below the contact point
+        double yk = k;
+        const double a = e[std::size_t(k - 1)], b = e[std::size_t(k)], cc = e[std::size_t(k + 1)];
+        if (std::isfinite(a) && std::isfinite(cc)) {
+            const double den = a - 2 * b + cc;
+            if (std::abs(den) > 1e-9) yk = k + std::clamp(0.5 * (a - cc) / den, -0.5, 0.5);
+        }
+        *yOut = c.y0 + yk;
+        return true;
+    };
+    std::vector<double> eL(static_cast<std::size_t>(n)), eR(static_cast<std::size_t>(n));
+    for (int i = 0; i < n; ++i) eL[std::size_t(i)] = -L[std::size_t(i)], eR[std::size_t(i)] = R[std::size_t(i)];
+    double yl = 0, yr = 0;
+    if (!corner(eL, &yl) || !corner(eR, &yr)) return bl;
+    auto interp = [&](const std::vector<double>& v, double y) {
+        const double t = y - c.y0;
+        const int i = std::clamp(int(std::floor(t)), 0, n - 2);
+        const double f = t - i;
+        return (1 - f) * v[std::size_t(i)] + f * v[std::size_t(i + 1)];
+    };
+    const Pt pl{interp(L, yl), yl}, pr{interp(R, yr), yr};
+    if (!(pr.x > pl.x + 10)) return bl;
+    const double b = (pr.y - pl.y) / (pr.x - pl.x);
+    if (std::abs(b) > std::tan(5 * M_PI / 180)) return bl;
+    bl.p0 = {0.5 * (pl.x + pr.x), 0.5 * (pl.y + pr.y)};
+    bl.angle = std::atan(b);
+    bl.found = true;
+    bl.reflection = true;
+    return bl;
+}
+
 // Levenberg–Marquardt with a forward-difference Jacobian.
 Eigen::VectorXd levenbergMarquardt(const std::function<Eigen::VectorXd(const Eigen::VectorXd&)>& f,
                                    Eigen::VectorXd p, const Eigen::VectorXd& step, int maxIt = 60) {
@@ -470,11 +586,16 @@ DropAnalysis analyzeDrop(const GrayImage& im, const DropOptions& opt) {
     const double T = a.threshold;
 
     a.baseline = opt.baseline ? *opt.baseline : findBaseline(im, T);
+    if (!opt.baseline && (!a.baseline.found || a.baseline.oneSide)) {
+        const Baseline rb = findReflectionBaseline(im, T);
+        if (rb.found) a.baseline = rb;
+    }
     if (!a.baseline.found) {
         a.error = QStringLiteral("baseline not found");
         addCheck(a, Check::Error, QStringLiteral("baseline"),
-                 QStringLiteral("No substrate edge at the sides of the image: the substrate must be visible left and right of "
-                                "the drop (or set the baseline by hand)."));
+                 QStringLiteral("No substrate edge at the sides of the image and no drop reflection: the substrate must be "
+                                "visible left and right of the drop, or its surface must reflect the drop (or set the "
+                                "baseline by hand)."));
         return a;
     }
     const Baseline& bl = a.baseline;
@@ -536,6 +657,18 @@ DropAnalysis analyzeDrop(const GrayImage& im, const DropOptions& opt) {
         int l = col, r = col;
         while (l > 0 && isDark(l - 1, y)) --l;
         while (r < im.w - 1 && isDark(r + 1, y)) ++r;
+        // light passing through the drop leaves bright patches inside it: the outline is the outermost dark
+        // pixel of the drop's columns in this row, not the end of the run through the centre
+        for (int x = std::max(1, x0 - 1); x < l; ++x)
+            if (isDark(x, y)) {
+                l = x;
+                break;
+            }
+        for (int x = std::min(im.w - 2, x1 + 1); x > r; --x)
+            if (isDark(x, y)) {
+                r = x;
+                break;
+            }
         if (l == 0 || r == im.w - 1) continue;
         // a side is an edge only where the run ends at background (not where it meets the substrate)
         const double al = im.at(l - 1, y), cl = im.at(l, y), ar = im.at(r + 1, y), cr = im.at(r, y);
