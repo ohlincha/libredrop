@@ -33,7 +33,7 @@ QList<int> dropIds(const QStringList& a) {
     return ids;
 }
 
-void printSummaries(const ld::SeriesSet& set) {
+void printSummaries(const ld::SeriesSet& set, const ld::SoakOptions& so = {}) {
     const QString L = set.lenUnit, V = set.volUnit;
     for (const ld::DropSeries& d : set.drops) {
         const ld::TrackSummary s = ld::summarize(d);
@@ -49,7 +49,27 @@ void printSummaries(const ld::SeriesSet& set) {
                 .arg(s.angleRelease, 0, 'f', 1).arg(s.angleEnd, 0, 'f', 1).arg(s.angleRate, 0, 'f', 3)
                 .arg(s.baseRelease, 0, 'f', 3).arg(s.baseEnd, 0, 'f', 3).arg(L)
                 .arg(s.volumeRelease, 0, 'f', 3).arg(s.volumeEnd, 0, 'f', 3).arg(V).arg(s.volumeRate, 0, 'g', 3));
+        const ld::Soaking k = ld::soak(d, so);
+        QStringList at;
+        for (std::size_t i = 0; i < so.times.size(); ++i)
+            at << QStringLiteral("%1 s: %2°").arg(so.times[i]).arg(k.angleAt[i], 0, 'f', 1);
+        out(QStringLiteral("  angle after contact %1; sorptivity %2 %3/s^0.5 (R² %4)%5")
+                .arg(at.join(QStringLiteral(", "))).arg(k.sorptivity, 0, 'g', 3).arg(L).arg(k.sorptivityR2, 0, 'f', 3)
+                .arg(std::isfinite(k.absorbedAfter) ? QStringLiteral("; absorbed after %1 s").arg(k.absorbedAfter, 0, 'f', 2)
+                                                    : QStringLiteral("; still there at the end")));
     }
+}
+
+ld::SoakOptions soakOptions(const QStringList& a, double videoEnd) {
+    ld::SoakOptions so;
+    const QString times = arg(a, "--at");
+    if (!times.isEmpty()) {
+        so.times.clear();
+        for (const QString& x : times.split(QLatin1Char(','), Qt::SkipEmptyParts)) so.times.push_back(x.toDouble());
+    }
+    so.evaporation = arg(a, "--evaporation", "0").toDouble();
+    so.videoEnd = videoEnd;
+    return so;
 }
 
 bool savePlot(const QStringList& a, const ld::SeriesSet& set) {
@@ -138,8 +158,11 @@ int main(int argc, char** argv) {
             out(err);
             return 1;
         }
+        double tEnd = 0;   // (the table doesn't keep the recording's end: the last measured frame)
+        for (const ld::DropSeries& d : set.drops)
+            if (!d.t.empty()) tEnd = std::max(tEnd, d.t.back());
         ld::selectDrops(&set, dropIds(a));
-        printSummaries(set);
+        printSummaries(set, soakOptions(a, tEnd));
         return savePlot(a, set) ? 0 : 1;
     }
     if (a[0] == QLatin1String("video")) {
@@ -176,8 +199,11 @@ int main(int argc, char** argv) {
                 .arg(r.frames).arg(r.surface.p0.y, 0, 'f', 1).arg(r.surface.angle * 180 / M_PI, 0, 'f', 2)
                 .arg(r.surfaceFrames).arg(r.tracks.size()));
         ld::SeriesSet set = ld::seriesOf(r, u);
+        double tEnd = r.info.times.empty() ? 0 : r.info.times.back();
+        for (const ld::DropSeries& d : set.drops)
+            if (!d.t.empty()) tEnd = std::max(tEnd, d.t.back());
         ld::selectDrops(&set, dropIds(a));
-        printSummaries(set);
+        printSummaries(set, soakOptions(a, tEnd));
         const QString csv = arg(a, "-o");
         if (!csv.isEmpty()) {
             QFile f(csv);

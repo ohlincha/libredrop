@@ -387,4 +387,56 @@ QImage plotSeries(const SeriesSet& r, int W, int H) {
     return img;
 }
 
+
+Soaking soak(const DropSeries& d, const SoakOptions& o) {
+    Soaking k;
+    const double t0 = d.tContact();
+    for (double t : o.times) k.angleAt.push_back(valueAt(d, d.angle, t0 + t));
+    if (d.t.size() < 3) return k;
+    // Φ(t) = ∫ A d√t from contact; A before the first usable base taken as that base
+    const std::size_t n = d.t.size();
+    std::vector<double> phi(n, 0.0);
+    double lastA = kNaN;
+    for (std::size_t i = 0; i < n && !std::isfinite(lastA); ++i)
+        if (std::isfinite(d.base[i])) lastA = M_PI * d.base[i] * d.base[i] / 4;
+    if (!std::isfinite(lastA)) return k;
+    double prevA = lastA;
+    for (std::size_t i = 1; i < n; ++i) {
+        const double A = std::isfinite(d.base[i]) ? M_PI * d.base[i] * d.base[i] / 4 : prevA;
+        phi[i] = phi[i - 1] + 0.5 * (A + prevA) * (std::sqrt(std::max(0.0, d.t[i] - t0)) - std::sqrt(std::max(0.0, d.t[i - 1] - t0)));
+        prevA = A;
+    }
+    const int rel = d.released();
+    std::vector<double> x, y;
+    for (std::size_t i = std::size_t(std::max(0, rel)); rel >= 0 && i < n; ++i)
+        if (std::isfinite(d.volume[i]) && std::isfinite(d.base[i])) {
+            x.push_back(phi[i]);
+            y.push_back(d.volume[i] + o.evaporation * (d.t[i] - t0));
+        }
+    k.points = int(x.size());
+    if (x.size() >= 8 && x.back() > x.front()) {
+        double mx = 0, my = 0;
+        for (std::size_t i = 0; i < x.size(); ++i) mx += x[i], my += y[i];
+        mx /= double(x.size()), my /= double(x.size());
+        double sxx = 0, sxy = 0, syy = 0;
+        for (std::size_t i = 0; i < x.size(); ++i)
+            sxx += (x[i] - mx) * (x[i] - mx), sxy += (x[i] - mx) * (y[i] - my), syy += (y[i] - my) * (y[i] - my);
+        if (sxx > 0) {
+            k.sorptivity = -sxy / sxx;
+            k.sorptivityR2 = syy > 0 ? sxy * sxy / (sxx * syy) : kNaN;
+        }
+    }
+    // absorbed: the track ends clearly before the recording does, with little volume left
+    double vStart = kNaN, vLast = kNaN, tLast = kNaN;
+    for (std::size_t i = std::size_t(std::max(0, rel)); rel >= 0 && i < n; ++i)
+        if (std::isfinite(d.volume[i])) {
+            if (!std::isfinite(vStart)) vStart = d.volume[i];
+            vLast = d.volume[i], tLast = d.t[i];
+        }
+    const double frame = n > 1 ? (d.t.back() - d.t.front()) / double(n - 1) : 0.1;
+    if (std::isfinite(o.videoEnd) && std::isfinite(vLast) && d.t.back() < o.videoEnd - 3 * frame && vLast < 0.3 * vStart)
+        k.absorbedAfter = tLast - t0;
+    return k;
+}
+
 }  // namespace ld

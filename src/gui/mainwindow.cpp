@@ -34,6 +34,9 @@
 #include <QStatusBar>
 #include <QThreadPool>
 #include <QTimer>
+#include <QRegularExpression>
+#include <QLineEdit>
+#include <QTabWidget>
 #include <QStyle>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -156,6 +159,15 @@ void MainWindow::buildUi() {
     step_->setPrefix(tr("1 in "));
     step_->setSpecialValueText(tr("all"));
     step_->setToolTip(tr("Measure every n-th frame (1: all). Larger steps are faster on long videos."));
+    soakTimes_ = new QLineEdit(QStringLiteral("0.1, 1, 10"));
+    soakTimes_->setToolTip(tr("Times after contact (s) at which the angle is reported in the Soaking tab"));
+    evaporation_ = new QDoubleSpinBox;
+    evaporation_->setRange(0, 10);
+    evaporation_->setDecimals(4);
+    evaporation_->setSingleStep(0.001);
+    evaporation_->setSuffix(tr(" µL/s"));
+    evaporation_->setToolTip(tr("<p>Volume lost by evaporation, measured with the same liquid on a non-absorbing surface "
+                                "(glass): added back before the sorptivity is fitted.</p>"));
     analyseButton_ = new QPushButton(tr("Analyse"));
     analyseButton_->setEnabled(false);
     progress_ = new QProgressBar;
@@ -169,6 +181,12 @@ void MainWindow::buildUi() {
     lt->addWidget(tension_);
     form->addRow(tr("ρ, γ"), lt);
     form->addRow(tr("Frames"), step_);
+    auto* sr = new QHBoxLayout;
+    sr->addWidget(new QLabel(tr("angle at")));
+    sr->addWidget(soakTimes_, 1);
+    sr->addWidget(new QLabel(tr("s; evaporation")));
+    sr->addWidget(evaporation_);
+    form->addRow(tr("Soaking"), sr);
     auto* ar = new QHBoxLayout;
     ar->addWidget(analyseButton_);
     ar->addWidget(progress_, 1);
@@ -196,7 +214,14 @@ void MainWindow::buildUi() {
     auto* tableBox = new QWidget;
     auto* tl = new QVBoxLayout(tableBox);
     tl->setContentsMargins(0, 0, 0, 0);
-    tl->addWidget(table_, 1);
+    soakTable_ = new QTreeWidget;
+    soakTable_->setRootIsDecorated(false);
+    soakTable_->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    soakTable_->header()->setStretchLastSection(false);
+    tabs_ = new QTabWidget;
+    tabs_->addTab(table_, tr("Shape"));
+    tabs_->addTab(soakTable_, tr("Soaking"));
+    tl->addWidget(tabs_, 1);
     auto* checksScroll = new QScrollArea;
     checksScroll->setWidget(checks_);
     checksScroll->setWidgetResizable(true);
@@ -271,6 +296,14 @@ void MainWindow::buildUi() {
     });
     connect(plot_, &PlotWidget::timeClicked, this, [this](double t) { slider_->setValue(frameAt(t)); });
     connect(sinceContact_, &QCheckBox::toggled, plot_, &PlotWidget::setSinceContact);
+    connect(soakTimes_, &QLineEdit::editingFinished, this, [this] {
+        updateTable();
+        saveSettings();
+    });
+    connect(evaporation_, &QDoubleSpinBox::editingFinished, this, [this] {
+        updateTable();
+        saveSettings();
+    });
     for (QWidget* w : std::initializer_list<QWidget*>{scale_, density_, tension_, step_})
         connect(qobject_cast<QAbstractSpinBox*>(w), &QAbstractSpinBox::editingFinished, this, &MainWindow::saveSettings);
 
@@ -283,6 +316,8 @@ void MainWindow::buildUi() {
     }
     scale_->setValue(st.value("scale", 94.23).toDouble());
     step_->setValue(st.value("step", 1).toInt());
+    soakTimes_->setText(st.value("soakTimes", QStringLiteral("0.1, 1, 10")).toString());
+    evaporation_->setValue(st.value("evaporation", 0.0).toDouble());
     sinceContact_->setChecked(st.value("sinceContact", false).toBool());
     statusBar()->showMessage(tr("Open a recording to start."));
 }
@@ -306,6 +341,8 @@ void MainWindow::saveSettings() const {
     st.setValue("tension", tension_->value());
     st.setValue("scale", scale_->value());
     st.setValue("step", step_->value());
+    st.setValue("soakTimes", soakTimes_->text());
+    st.setValue("evaporation", evaporation_->value());
     if (sinceContact_) st.setValue("sinceContact", sinceContact_->isChecked());
 }
 
@@ -530,8 +567,50 @@ void MainWindow::updateTable() {
         end->setToolTip(c0 + 3, tr("Largest base after release: %1 %2; change: %3 %2/s").arg(fmt(s.baseMax, 3), L, fmt(s.baseRate, 4)));
         end->setToolTip(c0 + 5, tr("Volume change after release: %1 %2/s").arg(fmt(s.volumeRate, 4), V));
     }
+    // soaking tab (videos only)
+    soakTable_->clear();
+    tabs_->setTabVisible(1, !isImage_);
+    if (!isImage_) {
+        const ld::SoakOptions so = soakOptions();
+        QStringList sh{tr("Drop")};
+        for (double t : so.times) sh << tr("θ at %1 s (°)").arg(t);
+        sh << tr("Sorptivity (%1/√s)").arg(L) << tr("R²") << tr("Absorbed after (s)");
+        soakTable_->setColumnCount(int(sh.size()));
+        soakTable_->setHeaderLabels(sh);
+        const int cs = 1 + int(so.times.size());
+        soakTable_->headerItem()->setToolTip(cs, tr("<p>Uptake per contact area: absorbed volume = S · area · √t "
+                                                    "(after release, evaporation added back). Glass: should be ≈ 0.</p>"));
+        soakTable_->headerItem()->setToolTip(cs + 1, tr("How well volume follows S·∫A d√t (1 = exactly)"));
+        soakTable_->headerItem()->setToolTip(cs + 2, tr("Time from contact until the drop disappeared; empty: still there at the end"));
+        for (const ld::DropSeries& d : set.drops) {
+            const ld::Soaking k = ld::soak(d, so);
+            auto* it = new QTreeWidgetItem(soakTable_);
+            it->setText(0, QString::number(d.id));
+            QPixmap swatch(12, 12);
+            swatch.fill(ld::dropColor(d.id));
+            it->setIcon(0, QIcon(swatch));
+            for (std::size_t i = 0; i < so.times.size(); ++i) it->setText(1 + int(i), fmt(k.angleAt[i], 1));
+            it->setText(cs, std::isfinite(k.sorptivity) ? QString::number(k.sorptivity, 'g', 3) : tr("—"));
+            it->setText(cs + 1, fmt(k.sorptivityR2, 3));
+            it->setText(cs + 2, std::isfinite(k.absorbedAfter) ? fmt(k.absorbedAfter, 2) : QString());
+        }
+    }
     view_->setChosen(chosenIds());
     fitTableWidth();
+}
+
+ld::SoakOptions MainWindow::soakOptions() const {
+    ld::SoakOptions so;
+    std::vector<double> times;
+    for (const QString& x : soakTimes_->text().split(QRegularExpression(QStringLiteral("[,;\\s]+")), Qt::SkipEmptyParts)) {
+        bool ok = false;
+        const double t = x.toDouble(&ok);
+        if (ok && t >= 0) times.push_back(t);
+    }
+    if (!times.empty()) so.times = times;
+    so.evaporation = evaporation_->value();
+    so.videoEnd = info_.times.empty() ? ld::kNaN : info_.times.back();
+    return so;
 }
 
 void MainWindow::fitTableWidth() {

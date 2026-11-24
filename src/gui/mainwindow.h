@@ -64,6 +64,11 @@ private:
     QSlider* slider_ = nullptr;
     QLabel* timeLabel_ = nullptr;
     QTreeWidget* table_ = nullptr;
+    QTreeWidget* soakTable_ = nullptr;     // soaking: angle at fixed times, sorptivity, absorption
+    class QTabWidget* tabs_ = nullptr;
+    class QLineEdit* soakTimes_ = nullptr;
+    QDoubleSpinBox* evaporation_ = nullptr;
+    ld::SoakOptions soakOptions() const;
     QSplitter* split_ = nullptr;   // frame | side panel
     void fitTableWidth();                 // widen the side panel so every table column shows
     QLabel* checks_ = nullptr;

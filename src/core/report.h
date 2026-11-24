@@ -68,6 +68,25 @@ struct TrackSummary {
 };
 TrackSummary summarize(const DropSeries& d);
 
+// Soaking into a porous substrate (separators, paper): values in the series' units.
+//  - angle at fixed times after contact (comparable between runs, unlike the release from the needle);
+//  - sorptivity S: the drop loses volume as  V(t) = V0 − S·Φ(t),  Φ(t) = ∫ A d√t  (A = π·base²/4, t from contact),
+//    i.e. absorbed volume per contact area grows as S·√t (capillary uptake). Fitted after release; units
+//    length/√s (mm/√s with a scale). Evaporation (volume/s, measured on a non-absorbing surface) is added back;
+//  - absorbed: the drop disappeared before the end of the recording (time since contact).
+struct SoakOptions {
+    std::vector<double> times{0.1, 1.0, 10.0};   // s after contact
+    double evaporation = 0;                      // volume unit per second (positive: loss)
+    double videoEnd = kNaN;                      // s; needed to tell "absorbed" from "recording ended"
+};
+struct Soaking {
+    std::vector<double> angleAt;                 // per SoakOptions::times (NaN: not measured then)
+    double sorptivity = kNaN, sorptivityR2 = kNaN;
+    double absorbedAfter = kNaN;                 // s since contact
+    int points = 0;                              // used in the fit
+};
+Soaking soak(const DropSeries& d, const SoakOptions& o);
+
 // Angle, base width and volume against time, one colour per drop (the same colour for a drop id everywhere).
 QColor dropColor(int id);
 struct PlotStyle {

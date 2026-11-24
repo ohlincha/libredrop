@@ -1,6 +1,7 @@
 // LibreDrop: graphical program.  LibreDrop [FILE | --example]
 #include <QAbstractButton>
 #include <QApplication>
+#include <QTabWidget>
 #include <QIcon>
 #include <QTimer>
 #include <QWheelEvent>
@@ -56,7 +57,10 @@ int main(int argc, char** argv) {
             QTimer::singleShot(std::max(0, (ms > 0 ? ms : 3000) - int(1000 * play)), &w, [&w] {
                 if (auto* b = w.findChild<QAbstractButton*>(QStringLiteral("play"))) b->click();
             });
-        QTimer::singleShot(ms > 0 ? ms : 3000, &w, [&w, shot] {
+        // LIBREDROP_SHOT_TAB=n: show that tab of the drop table
+        const int tab = qEnvironmentVariableIntValue("LIBREDROP_SHOT_TAB");
+        QTimer::singleShot(ms > 0 ? ms : 3000, &w, [&w, shot, tab] {
+            if (auto* t = w.findChild<QTabWidget*>()) t->setCurrentIndex(tab);
             w.grab().save(shot.section(QLatin1Char(','), 0, 0));
             w.close();
         });
