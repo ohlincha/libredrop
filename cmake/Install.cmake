@@ -1,6 +1,6 @@
 # Installation and packages: Linux .deb (CPack), macOS app bundle, Windows folder (+ Inno Setup in CI).
-# ffmpeg is a dependency of the .deb; the Windows installer ships ffmpeg.exe/ffprobe.exe next to the program;
-# on macOS it comes from Homebrew (see the README).
+# Motion-JPEG recordings (the camera's format, and LibreDrop's compact copies) need no ffmpeg; for other video
+# formats ffmpeg is used if installed (recommended by the .deb; Windows/macOS: optional, see the README).
 include(GNUInstallDirs)
 
 if(LIBREDROP_GUI)
@@ -65,7 +65,6 @@ else()
   set(CPACK_DEBIAN_PACKAGE_SECTION science)
   set(CPACK_DEBIAN_PACKAGE_MAINTAINER "${CPACK_PACKAGE_CONTACT}")
   set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
-  set(CPACK_DEBIAN_PACKAGE_DEPENDS "ffmpeg")
-  set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "qt6-wayland")
+  set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "ffmpeg, qt6-wayland")
   include(CPack)
 endif()

@@ -14,6 +14,7 @@
 // For video the surface is found once from several frames and then held fixed (stage and camera do not move).
 #include <QString>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "drop.h"
@@ -54,12 +55,15 @@ struct Scene {
     double background = 0, dark = 0, threshold = 0;
     Baseline surface;
     int surfaceVotes = 0;                // corner points on the surface
+    std::vector<std::pair<Pt, double>> surfaceCorners;   // those points and their weights (for combining frames)
     std::vector<SceneDrop> drops;        // left to right
 };
 
 Scene analyzeScene(const GrayImage& im, const SceneOptions& opt = {});
 
-// Surface from the corners of several frames' scenes: median height and tilt of the found surfaces.
-std::optional<Baseline> combineSurfaces(const std::vector<Baseline>& found);
+// Surface from several frames: start from the median height and tilt of the frames' surfaces, then a weighted
+// least-squares line through all their corner points within 1.5 px of it (static drops give the same corners in
+// every frame, so this averages out the per-frame scatter).
+std::optional<Baseline> combineSurfaces(const std::vector<Scene>& found);
 
 }  // namespace ld

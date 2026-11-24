@@ -9,6 +9,7 @@
 #include <QGuiApplication>
 #include <QImage>
 #include <QFile>
+#include <QFileInfo>
 #include <QStringList>
 #include <cstdio>
 
@@ -91,6 +92,37 @@ int main(int argc, char** argv) {
             return 1;
         }
         out(file);
+        return 0;
+    }
+    if (a[0] == QLatin1String("compact")) {   // compact copy: band around the surface, grey, JPEG quality
+        if (a.size() < 3) {
+            out(QStringLiteral("LibreDropCLI compact IN OUT.mkv [--quality Q] [--rows Y0,Y1] [--step N]"));
+            return 1;
+        }
+        ld::CompactOptions co;
+        co.quality = arg(a, "--quality", "85").toInt();
+        co.step = arg(a, "--step", "1").toInt();
+        const QString rows = arg(a, "--rows");
+        if (!rows.isEmpty()) {
+            co.y0 = rows.section(QLatin1Char(','), 0, 0).toInt(), co.y1 = rows.section(QLatin1Char(','), 1, 1).toInt();
+        } else {   // from a quick analysis (every 10th frame)
+            ld::VideoOptions vo;
+            vo.step = 10;
+            const ld::VideoResult r = ld::analyzeVideo(a[1], vo);
+            if (!r.ok) {
+                out(QStringLiteral("no drops found to crop to (%1): give --rows Y0,Y1").arg(r.error));
+                return 1;
+            }
+            ld::suggestCrop(r, &co.y0, &co.y1);
+        }
+        out(QStringLiteral("rows %1..%2, quality %3").arg(co.y0).arg(co.y1).arg(co.quality));
+        QString err;
+        if (!ld::writeCompact(a[1], a[2], co, {}, &err)) {
+            out(err);
+            return 1;
+        }
+        out(QStringLiteral("%1: %2 MB (from %3 MB)")
+                .arg(a[2]).arg(QFileInfo(a[2]).size() / 1e6, 0, 'f', 1).arg(QFileInfo(a[1]).size() / 1e6, 0, 'f', 1));
         return 0;
     }
     if (a[0] == QLatin1String("report")) {   // summary and plot of chosen drops from a saved table

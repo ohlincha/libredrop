@@ -1,8 +1,9 @@
 #pragma once
 // Drops over time in a video.
 //
-// Frames are read through ffmpeg (on PATH, or the program named by LIBREDROP_FFMPEG), as grey levels, with the
-// timestamps from the file (ffprobe), so a camera that drops frames still gives true times. A list of image
+// Motion-JPEG recordings (the camera's own format) are read directly (mjpeg.h). Other formats are read through
+// ffmpeg (next to the program, on PATH, or LIBREDROP_FFMPEG). Either way frames come as grey levels with the
+// timestamps from the file, so a camera that drops frames still gives true times. A list of image
 // files works too (times from --fps).
 //
 // Pass 1 finds the surface in up to `surfaceSamples` frames spread over the video and takes the median: stage and
@@ -24,6 +25,8 @@ namespace ld {
 struct VideoInfo {
     int w = 0, h = 0;
     std::vector<double> times;     // seconds, one per frame
+    bool native = false;           // Motion-JPEG, read without ffmpeg
+    QString format;
     QString error;
 };
 
@@ -68,6 +71,21 @@ struct VideoResult {
 };
 
 using Progress = std::function<void(int done, int total)>;
+
+// Compact copy of a recording: rows y0..y1 only (the band with the surface, the drops and their reflection),
+// grey, JPEG at the given quality, Matroska Motion-JPEG with the original frame times. Typically 5–10× smaller than
+// the camera's file and still read without ffmpeg.
+struct CompactOptions {
+    int y0 = 0, y1 = -1;           // rows kept (inclusive); y1 < 0: to the bottom
+    int quality = 85;              // JPEG quality 1–100
+    int step = 1;                  // keep every step-th frame
+    double start = 0, end = std::numeric_limits<double>::infinity();
+    const std::atomic<bool>* cancel = nullptr;
+};
+bool writeCompact(const QString& in, const QString& out, const CompactOptions& opt, const Progress& progress, QString* error);
+// Rows worth keeping, from an analysis: the drops' tallest height above the surface (with room for the needle
+// above) and their reflection below.
+void suggestCrop(const VideoResult& r, int* y0, int* y1);
 VideoResult analyzeVideo(const QString& path, const VideoOptions& opt, const Progress& progress = {});
 VideoResult analyzeImages(const QStringList& files, const VideoOptions& opt, const Progress& progress = {});
 

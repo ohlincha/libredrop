@@ -82,6 +82,31 @@ bool reflectionContacts(const GrayImage& im, const std::vector<int>& lab, const 
             double m = -1e9;
             for (int i = 0; i < n; ++i)
                 if (std::isfinite(e[std::size_t(i)]) && e[std::size_t(i)] > m) m = e[std::size_t(i)], k = i;
+            // near 90° the rows reaching out furthest are the drop's wall and its mirror image: either one stretch
+            // (take its middle) or two bulges with a shallow neck between them (take the neck)
+            std::vector<std::pair<int, int>> runs;
+            for (int i = 0; i < n; ++i) {
+                const bool nearMax = std::isfinite(e[std::size_t(i)]) && e[std::size_t(i)] > m - 1.0;
+                if (nearMax && (runs.empty() || runs.back().second != i - 1)) runs.push_back({i, i});
+                else if (nearMax) runs.back().second = i;
+            }
+            const auto own = std::find_if(runs.begin(), runs.end(), [&](const auto& r) { return r.first <= k && k <= r.second; });
+            const int gapMax = std::max(6, n / 8);
+            const std::pair<int, int>* other = nullptr;
+            for (const auto& r : runs)
+                if (&r != &*own && std::min(std::abs(r.first - own->second), std::abs(own->first - r.second)) <= gapMax &&
+                    (!other || std::abs(r.first - k) < std::abs(other->first - k)))
+                    other = &r;
+            if (other) {
+                const int g0 = std::min(own->second, other->second), g1 = std::max(own->first, other->first);
+                int kn = g0;
+                for (int i = g0; i <= g1; ++i)
+                    if (std::isfinite(e[std::size_t(i)]) && e[std::size_t(i)] < e[std::size_t(kn)]) kn = i;
+                k = kn;
+            } else if (own->second - own->first >= 4) {
+                *yOut = c.y0 + 0.5 * (own->first + own->second);
+                return own->first > 0 && own->second < n - 1;
+            }
         }
         if (k <= 0 || k >= n - 1) return false;   // a reflection must be visible below the contact point
         double yk = k;
@@ -123,24 +148,37 @@ struct Candidate {
 
 }  // namespace
 
-std::optional<Baseline> combineSurfaces(const std::vector<Baseline>& found) {
-    std::vector<double> ys, as, xs;
-    for (const Baseline& b : found)
-        if (b.found) ys.push_back(b.p0.y), as.push_back(b.angle), xs.push_back(b.p0.x);
+std::optional<Baseline> combineSurfaces(const std::vector<Scene>& found) {
+    std::vector<double> ys, as;
+    const double x = found.empty() ? 0 : found.front().surface.p0.x;
+    std::vector<std::pair<Pt, double>> pts;
+    for (const Scene& s : found)
+        if (s.ok && s.surface.found) {
+            ys.push_back(s.surface.p0.y + std::tan(s.surface.angle) * (x - s.surface.p0.x));
+            as.push_back(s.surface.angle);
+            pts.insert(pts.end(), s.surfaceCorners.begin(), s.surfaceCorners.end());
+        }
     if (ys.empty()) return std::nullopt;
-    // all to a common x (the first one's), then medians
-    const double x = xs[0];
-    for (std::size_t i = 0; i < ys.size(); ++i) ys[i] += std::tan(as[i]) * (x - xs[i]);
     auto median = [](std::vector<double> v) {
         std::nth_element(v.begin(), v.begin() + long(v.size() / 2), v.end());
         return v[v.size() / 2];
     };
-    Baseline b;
-    b.p0 = {x, median(ys)};
-    b.angle = median(as);
-    b.found = true;
-    b.reflection = true;
-    return b;
+    double b = std::tan(median(as)), a = median(ys) - b * x;
+    for (int pass = 0; pass < 3; ++pass) {
+        double sw = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+        for (const auto& [p, w] : pts)
+            if (std::abs(p.y - a - b * p.x) < 1.5) sw += w, sx += w * p.x, sy += w * p.y, sxx += w * p.x * p.x, sxy += w * p.x * p.y;
+        const double det = sw * sxx - sx * sx;
+        if (sw <= 0 || std::abs(det) < 1e-9 * sw * sw) break;
+        b = (sw * sxy - sx * sy) / det;
+        a = (sy - b * sx) / sw;
+    }
+    Baseline bl;
+    bl.p0 = {x, a + b * x};
+    bl.angle = std::atan(b);
+    bl.found = true;
+    bl.reflection = true;
+    return bl;
 }
 
 Scene analyzeScene(const GrayImage& im, const SceneOptions& opt) {
@@ -170,7 +208,26 @@ Scene analyzeScene(const GrayImage& im, const SceneOptions& opt) {
     if (opt.surface) {
         s.surface = *opt.surface;
     } else {
-        for (Candidate& c : cands) c.corners = reflectionContacts(im, lab, *c.blob, T, &c.l, &c.r) && c.r.x > c.l.x + 8;
+        // corners at each blob's own threshold (half-way between its darkest pixels and the background around
+        // it), so they do not move when the picture is cropped or the stage is out of view
+        for (Candidate& c : cands) {
+            const Blob& b = *c.blob;
+            std::vector<float> bg, dk;
+            for (int y = b.y0; y <= b.y1; ++y)
+                for (int x = std::max(0, b.x0 - 20); x <= std::min(im.w - 1, b.x1 + 20); ++x) {
+                    const int l = lab[std::size_t(y) * im.w + x];
+                    if (l == 0) bg.push_back(im.at(x, y));
+                    else if (l == b.id) dk.push_back(im.at(x, y));
+                }
+            double Tc = T;
+            if (bg.size() > 50 && dk.size() > 20) {
+                std::nth_element(bg.begin(), bg.begin() + long(bg.size() / 2), bg.end());
+                std::nth_element(dk.begin(), dk.begin() + long(dk.size() / 20), dk.end());
+                Tc = 0.5 * (bg[bg.size() / 2] + dk[dk.size() / 20]);
+                Tc = std::clamp(Tc, T - 25, T + 25);
+            }
+            c.corners = reflectionContacts(im, lab, b, Tc, &c.l, &c.r) && c.r.x > c.l.x + 8;
+        }
         if (qEnvironmentVariableIsSet("LIBREDROP_DEBUG"))
             for (const Candidate& c : cands)
                 qDebug("blob %d n %d x %d..%d y %d..%d top %d corners %d L(%.1f,%.1f) R(%.1f,%.1f)", c.blob->id, c.blob->n,
@@ -185,7 +242,8 @@ Scene analyzeScene(const GrayImage& im, const SceneOptions& opt) {
         bool anyFree = false;
         for (const Candidate& c : cands) anyFree |= c.corners && !c.top;
         for (const Candidate& c : cands) {
-            if (!c.corners || (c.top && anyFree)) continue;
+            // (a blob cut off by the image's side has the image edge as its outer "corner")
+            if (!c.corners || (c.top && anyFree) || c.blob->x0 == 0 || c.blob->x1 == im.w - 1) continue;
             const double rise = std::max(1.0, std::min(c.l.y, c.r.y) - c.blob->y0);
             pts.push_back({c.l, rise});
             pts.push_back({c.r, rise});
@@ -222,6 +280,9 @@ Scene analyzeScene(const GrayImage& im, const SceneOptions& opt) {
                 a = (sy - b * sx) / sw;
             }
             s.surfaceVotes = n;
+            if (pass == 1)
+                for (const Corner& c : pts)
+                    if (std::abs(c.p.y - a - b * c.p.x) < kInlier) s.surfaceCorners.push_back({c.p, c.w});
         }
         s.surface.p0 = {im.w / 2.0, a + b * im.w / 2.0};
         s.surface.angle = std::atan(b);
@@ -234,6 +295,7 @@ Scene analyzeScene(const GrayImage& im, const SceneOptions& opt) {
     struct Span {
         const Candidate* c;
         int x0, x1;
+        double rise;
     };
     std::vector<Span> spans;
     for (const Candidate& c : cands) {
@@ -275,7 +337,7 @@ Scene analyzeScene(const GrayImage& im, const SceneOptions& opt) {
             touches = y >= 0 && y < im.h && lab[std::size_t(y) * im.w + x] == b.id;
         }
         if (x1 < 0 || rise < opt.minHeightPx || x1 - x0 + 1 < opt.minWidthPx || !touches || !(below || !opt.surface)) continue;
-        spans.push_back({&c, x0, x1});
+        spans.push_back({&c, x0, x1, rise});
     }
     std::sort(spans.begin(), spans.end(), [](const Span& a, const Span& b) { return a.x0 < b.x0; });
     for (std::size_t i = 0; i < spans.size(); ++i) {
@@ -295,13 +357,39 @@ Scene analyzeScene(const GrayImage& im, const SceneOptions& opt) {
         Baseline bl = s.surface;
         bl.p0 = {bl.p0.x - lo, bl.p0.y};
         o.baseline = bl;
-        o.dark = s.dark, o.background = s.background;   // same threshold as the blobs
-        // only this blob is dark in the cut-out (other drops, the needle elsewhere and specks are blanked)
+        // grey levels of this drop, so that the threshold does not depend on what else is in the picture (a
+        // cropped copy, the dark stage, the background's brightness gradient): background = median of the bright
+        // pixels beside and above the drop, dark = 5th percentile of the drop's own pixels
+        {
+            std::vector<float> bg, dk;
+            const int yTop = std::max(0, int(lineY(s.surface, d.xc) - 2.5 * sp.rise) - 10);
+            for (int y = yTop; y < im.h; ++y)
+                for (int x = lo; x <= hi; ++x) {
+                    const double h = lineY(s.surface, x) - y;
+                    if (h < 3) continue;
+                    const int l = lab[std::size_t(y) * im.w + x];
+                    if (l == 0) bg.push_back(im.at(x, y));
+                    else if (l == sp.c->blob->id) dk.push_back(im.at(x, y));
+                }
+            auto q = [](std::vector<float>& v, double f) {
+                std::nth_element(v.begin(), v.begin() + long(f * double(v.size() - 1)), v.end());
+                return double(v[std::size_t(f * double(v.size() - 1))]);
+            };
+            o.dark = dk.size() > 20 ? q(dk, 0.05) : s.dark;
+            o.background = bg.size() > 100 ? q(bg, 0.5) : s.background;
+        }
+        // only this blob is dark in the cut-out: other drops, the needle elsewhere and specks are blanked, with a
+        // 3 px margin (their grey fringe may be darker than this drop's own threshold)
         GrayImage cut = crop(im, lo, 0, hi - lo + 1, im.h);
+        const int id = sp.c->blob->id, r = 3;
         for (int y = 0; y < cut.h; ++y)
             for (int x = 0; x < cut.w; ++x) {
                 const int l = lab[std::size_t(y) * im.w + lo + x];
-                if (l && l != sp.c->blob->id && y < lineY(s.surface, lo + x) + 2) cut.at(x, y) = float(s.background);
+                if (!l || l == id || y >= lineY(s.surface, lo + x) + 2) continue;
+                for (int yy = std::max(0, y - r); yy <= std::min(cut.h - 1, y + r); ++yy)
+                    for (int xx = std::max(0, x - r); xx <= std::min(cut.w - 1, x + r); ++xx)
+                        if (lab[std::size_t(yy) * im.w + lo + xx] != id && yy < lineY(s.surface, lo + xx) + 2)
+                            cut.at(xx, yy) = float(o.background);
             }
         d.a = analyzeDrop(cut, o);
         if ((sp.x0 <= 1 || sp.x1 >= im.w - 2) && !d.a.hasCheck(QStringLiteral("border")))

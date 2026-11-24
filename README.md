@@ -33,11 +33,13 @@ yet.
 
 Planned: live camera and recording in the program, absorption models for separators, camera control, pendant-drop surface tension, surface free energy for non-absorbing samples.
 
-Install: Debian 13 / Ubuntu 24.04 `.deb` (pulls in ffmpeg), Windows installer (ffmpeg included), macOS `.dmg`
-(Intel and Apple Silicon; needs ffmpeg from Homebrew: `brew install ffmpeg`) from the releases page. Help ▸ Open
+Install: Debian 13 / Ubuntu 24.04 `.deb`, Windows installer, macOS `.dmg` (Intel and Apple Silicon) from the
+releases page. The camera's recordings (Motion-JPEG) and LibreDrop's compact copies open directly; other video
+formats need ffmpeg (Linux: `apt install ffmpeg`; macOS: `brew install ffmpeg`; Windows: ffmpeg.exe and ffprobe.exe
+next to LibreDrop.exe or on PATH). File ▸ Save compact copy keeps the band around the drops in grey, 5–15× smaller. Help ▸ Open
 example (or `LibreDrop --example`) shows a built-in recording, so no goniometer is needed to try it.
 
-Build: C++17, Qt 6 (Core, Gui, Widgets, Concurrent), Eigen 3.4+, CMake 3.21+; ffmpeg at run time for videos.
+Build: C++17, Qt 6 (Core, Gui, Widgets, Concurrent), Eigen 3.4+, CMake 3.21+.
 
     cmake -S . -B build && cmake --build build && ctest --test-dir build
 

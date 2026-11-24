@@ -43,6 +43,7 @@ private:
     void analysisDone();
     void exportTable();
     void exportPlot();
+    void saveCompact();
     void showFrame(int index);
     void frameReady(int generation, int index, const QImage& image, const std::optional<ld::Scene>& scene);
     void updateTable();
@@ -81,6 +82,7 @@ private:
     ld::Units resultUnits_;
     std::shared_ptr<std::atomic<bool>> cancel_;
     QFutureWatcher<ld::VideoResult> watcher_;
+    QFutureWatcher<QString> compactWatcher_;   // error text, empty when done
     int frameGeneration_ = 0;
     bool frameBusy_ = false;
     int pendingFrame_ = -1;

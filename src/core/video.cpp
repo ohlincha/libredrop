@@ -1,11 +1,15 @@
 #include "video.h"
 
+#include "mjpeg.h"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <QImage>
 #include <QProcess>
 #include <algorithm>
+#include <future>
+#include <thread>
 #include <cmath>
 
 namespace ld {
@@ -51,6 +55,18 @@ bool run(const QString& program, const QStringList& args, QByteArray* out, QStri
     }
     *out = p.readAllStandardOutput();
     return true;
+}
+
+int batchSize() { return std::clamp(int(std::thread::hardware_concurrency()), 1, 16); }
+
+// f applied to every element, each in its own thread (batches are small: one element per core).
+template <class T, class F>
+auto parallelMap(const std::vector<T>& in, F f) -> std::vector<decltype(f(in[0]))> {
+    std::vector<std::future<decltype(f(in[0]))>> fut;
+    for (const T& x : in) fut.push_back(std::async(std::launch::async, [&f, &x] { return f(x); }));
+    std::vector<decltype(f(in[0]))> out;
+    for (auto& r : fut) out.push_back(r.get());
+    return out;
 }
 
 // Strip what the tables and plots do not need (outline points), image coordinates for the cut-out.
@@ -151,6 +167,16 @@ VideoResult track(std::vector<Measured> frames, const VideoOptions& opt) {
 
 VideoInfo probeVideo(const QString& path) {
     VideoInfo v;
+    if (!qEnvironmentVariableIsSet("LIBREDROP_FFMPEG_ONLY")) {   // Motion-JPEG (camera format, LibreDrop copies): no ffmpeg
+        MjpegReader r;
+        if (r.open(path)) {
+            v.w = r.width(), v.h = r.height();
+            v.times = r.times();
+            v.native = true;
+            v.format = r.format();
+            return v;
+        }
+    }
     QByteArray out;
     if (!run(ffprobeProgram(),
              {"-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", path}, &out,
@@ -179,6 +205,29 @@ VideoInfo probeVideo(const QString& path) {
 bool readFrames(const QString& path, const VideoInfo& info, int step, int first, int last,
                 const std::function<bool(int, const GrayImage&)>& f, QString* error) {
     step = std::max(1, step);
+    if (info.native) {   // read a batch of JPEGs, decode them in parallel, hand them on in order
+        MjpegReader r;
+        if (!r.open(path, error)) return false;
+        const int batch = batchSize();
+        const int end = std::min(last, r.frames() - 1);
+        for (int i0 = std::max(0, first); i0 <= end; i0 += batch * step) {
+            std::vector<int> idx;
+            std::vector<QByteArray> data;
+            for (int i = i0; i <= end && int(idx.size()) < batch; i += step) idx.push_back(i), data.push_back(r.jpeg(i));
+            std::vector<GrayImage> ims = parallelMap(data, [](const QByteArray& d) {
+                QImage q;
+                return q.loadFromData(d, "JPG") ? fromQImage(q) : GrayImage{};
+            });
+            for (std::size_t k = 0; k < idx.size(); ++k) {
+                if (ims[k].empty()) {
+                    *error = QStringLiteral("frame %1 cannot be decoded").arg(idx[k]);
+                    return false;
+                }
+                if (!f(idx[k], ims[k])) return true;
+            }
+        }
+        return true;
+    }
     const QString sel = QStringLiteral("select='between(n\\,%1\\,%2)*not(mod(n-%1\\,%3))'").arg(first).arg(last).arg(step);
     QProcess p;
     p.start(ffmpegProgram(), {"-v", "error", "-i", path, "-vf", sel, "-fps_mode", "passthrough", "-f", "rawvideo",
@@ -224,6 +273,15 @@ bool readFrameAt(const QString& path, const VideoInfo& info, int index, GrayImag
         *error = QStringLiteral("no frame %1").arg(index);
         return false;
     }
+    if (info.native) {
+        MjpegReader r;
+        if (!r.open(path, error)) return false;
+        if (!r.frame(index, out)) {
+            *error = QStringLiteral("frame %1 cannot be decoded").arg(index);
+            return false;
+        }
+        return true;
+    }
     // seek a little before the frame's time, then take the first frame at or after it
     const double t = info.times[std::size_t(index)] - info.times[0];
     QByteArray raw;
@@ -259,18 +317,27 @@ VideoResult analyzeVideo(const QString& path, const VideoOptions& opt, const Pro
         return r;
     }
     // pass 1: surface
-    std::vector<Baseline> found;
+    std::vector<Scene> found;
     const int sampleStep = std::max(1, (last - first + 1) / std::max(1, opt.surfaceSamples));
     QString err;
-    if (!readFrames(path, info, sampleStep, first, last, [&](int, const GrayImage& im) {
-            SceneOptions so = opt.scene;
-            so.surface.reset();
-            const Scene s = analyzeScene(im, so);
-            if (s.ok && !s.drops.empty()) found.push_back(s.surface);
-            return !(opt.cancel && *opt.cancel);
-        }, &err)) {
-        r.error = err;
-        return r;
+    {
+        SceneOptions so1 = opt.scene;
+        so1.surface.reset();
+        std::vector<GrayImage> batch;
+        auto flush1 = [&] {
+            for (Scene& s : parallelMap(batch, [&](const GrayImage& im) { return analyzeScene(im, so1); }))
+                if (s.ok && !s.drops.empty()) found.push_back(std::move(s));
+            batch.clear();
+        };
+        if (!readFrames(path, info, sampleStep, first, last, [&](int, const GrayImage& im) {
+                batch.push_back(im);
+                if (int(batch.size()) >= batchSize()) flush1();
+                return !(opt.cancel && *opt.cancel);
+            }, &err)) {
+            r.error = err;
+            return r;
+        }
+        flush1();
     }
     if (opt.cancel && *opt.cancel) {
         r.error = QStringLiteral("cancelled");
@@ -281,20 +348,31 @@ VideoResult analyzeVideo(const QString& path, const VideoOptions& opt, const Pro
         r.error = QStringLiteral("no drop on a surface in any sampled frame");
         return r;
     }
-    // pass 2: every step-th frame with the fixed surface
+    // pass 2: every step-th frame with the fixed surface; frames are measured in parallel batches
     std::vector<Measured> frames;
     const int total = (last - first) / std::max(1, opt.step) + 1;
+    SceneOptions so = opt.scene;
+    so.surface = surface;
+    std::vector<std::pair<int, GrayImage>> pending;
+    auto flush = [&] {
+        std::vector<Scene> scenes =
+            parallelMap(pending, [&](const std::pair<int, GrayImage>& p) { return analyzeScene(p.second, so); });
+        for (std::size_t k = 0; k < pending.size(); ++k) {
+            const int idx = pending[k].first;
+            frames.push_back({idx, info.times[std::size_t(idx)] - info.times[0], std::move(scenes[k].drops)});
+        }
+        pending.clear();
+        if (progress) progress(int(frames.size()), total);
+    };
     if (!readFrames(path, info, opt.step, first, last, [&](int idx, const GrayImage& im) {
-            SceneOptions so = opt.scene;
-            so.surface = surface;
-            Scene s = analyzeScene(im, so);
-            frames.push_back({idx, info.times[std::size_t(idx)] - info.times[0], std::move(s.drops)});
-            if (progress) progress(int(frames.size()), total);
+            pending.emplace_back(idx, im);
+            if (int(pending.size()) >= batchSize()) flush();
             return !(opt.cancel && *opt.cancel);
         }, &err)) {
         r.error = err;
         return r;
     }
+    flush();
     if (opt.cancel && *opt.cancel) {
         r.error = QStringLiteral("cancelled");
         return r;
@@ -307,7 +385,7 @@ VideoResult analyzeVideo(const QString& path, const VideoOptions& opt, const Pro
 }
 
 VideoResult analyzeImages(const QStringList& files, const VideoOptions& opt, const Progress& progress) {
-    std::vector<Baseline> found;
+    std::vector<Scene> found;
     std::vector<GrayImage> images;
     for (const QString& f : files) {
         const QImage img(f);
@@ -322,8 +400,8 @@ VideoResult analyzeImages(const QStringList& files, const VideoOptions& opt, con
     for (std::size_t i = 0; i < images.size(); i += std::size_t(sampleStep)) {
         SceneOptions so = opt.scene;
         so.surface.reset();
-        const Scene s = analyzeScene(images[i], so);
-        if (s.ok && !s.drops.empty()) found.push_back(s.surface);
+        Scene s = analyzeScene(images[i], so);
+        if (s.ok && !s.drops.empty()) found.push_back(std::move(s));
     }
     const std::optional<Baseline> surface = opt.scene.surface ? opt.scene.surface : combineSurfaces(found);
     if (!surface) {
@@ -344,6 +422,66 @@ VideoResult analyzeImages(const QStringList& files, const VideoOptions& opt, con
     r.surface = *surface;
     r.surfaceFrames = int(found.size());
     return r;
+}
+
+bool writeCompact(const QString& in, const QString& out, const CompactOptions& opt, const Progress& progress, QString* error) {
+    const VideoInfo info = probeVideo(in);
+    if (!info.error.isEmpty()) {
+        *error = info.error;
+        return false;
+    }
+    const int n = int(info.times.size());
+    int first = 0, last = n - 1;
+    while (first < n && info.times[std::size_t(first)] - info.times[0] < opt.start) ++first;
+    while (last > first && info.times[std::size_t(last)] - info.times[0] > opt.end) --last;
+    const int y0 = std::clamp(opt.y0, 0, info.h - 1), y1 = opt.y1 < 0 ? info.h - 1 : std::clamp(opt.y1, y0, info.h - 1);
+    MjpegWriter w;
+    if (!w.open(out, info.w, y1 - y0 + 1, error)) return false;
+    const int total = (last - first) / std::max(1, opt.step) + 1;
+    int done = 0;
+    std::vector<std::pair<int, GrayImage>> pending;
+    bool ok = true;
+    auto flush = [&] {
+        const std::vector<QByteArray> jpegs = parallelMap(pending, [&](const std::pair<int, GrayImage>& p) {
+            return encodeJpeg(crop(p.second, 0, y0, info.w, y1 - y0 + 1), opt.quality);
+        });
+        for (std::size_t k = 0; k < pending.size(); ++k)
+            ok = ok && w.add(jpegs[k], info.times[std::size_t(pending[k].first)] - info.times[std::size_t(first)]);
+        done += int(pending.size());
+        pending.clear();
+        if (progress) progress(done, total);
+    };
+    if (!readFrames(in, info, opt.step, first, last, [&](int idx, const GrayImage& im) {
+            pending.emplace_back(idx, im);
+            if (int(pending.size()) >= batchSize()) flush();
+            return ok && !(opt.cancel && *opt.cancel);
+        }, error))
+        return false;
+    flush();
+    ok = w.finish() && ok;
+    if (opt.cancel && *opt.cancel) {
+        QFile::remove(out);
+        *error = QStringLiteral("cancelled");
+        return false;
+    }
+    if (!ok) *error = QStringLiteral("cannot write %1").arg(out);
+    return ok;
+}
+
+void suggestCrop(const VideoResult& r, int* y0, int* y1) {
+    double hMax = 0;
+    for (const DropTrack& t : r.tracks)
+        for (const TrackPoint& p : t.points)
+            if (p.drop.a.ok && !p.drop.onNeedle &&
+                std::none_of(p.drop.a.checks.begin(), p.drop.a.checks.end(), [](const Check& c) { return c.level == Check::Error; }))
+                hMax = std::max(hMax, p.drop.a.heightPx);
+    const double ys = r.surface.p0.y, tilt = std::abs(std::tan(r.surface.angle)) * r.info.w;
+    *y0 = std::max(0, int(std::floor(ys - tilt - std::max(2.5 * hMax + 60, 200.0))));
+    *y1 = std::min(r.info.h > 0 ? r.info.h - 1 : 1 << 20, int(std::ceil(ys + tilt + std::max(1.2 * hMax + 40, 80.0))));
+    // whole 16-row blocks (JPEG works in 8- or 16-pixel blocks)
+    *y0 -= *y0 % 16;
+    *y1 = *y0 + ((*y1 - *y0 + 16) / 16) * 16 - 1;
+    if (r.info.h > 0) *y1 = std::min(*y1, r.info.h - 1);
 }
 
 }  // namespace ld

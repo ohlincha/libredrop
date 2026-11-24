@@ -1,6 +1,7 @@
 name: Build installers
-# Installers for Linux (.deb: Debian 13, Ubuntu 24.04), Windows (Setup.exe with ffmpeg) and macOS (universal .dmg;
-# ffmpeg from Homebrew). Each is installed and tested on a clean system. A tag v* publishes a GitHub release with
+# Installers for Linux (.deb: Debian 13, Ubuntu 24.04), Windows (Setup.exe) and macOS (universal .dmg). Each is
+# installed and tested on a clean system without ffmpeg (Motion-JPEG recordings are read directly; ffmpeg is only
+# needed for other video formats). A tag v* publishes a GitHub release with
 # whatever built; manual runs (workflow_dispatch) only keep the files as run artifacts.
 on:
   push:
@@ -42,9 +43,10 @@ jobs:
           for f in build/libredrop_*.deb; do mv "$f" "dist/$(basename "${f%.deb}")_${{ matrix.tag }}.deb"; done
           dpkg-deb -I dist/*.deb
           dpkg-deb -c dist/*.deb
-      - name: Install with apt (pulls in ffmpeg) and test
+      - name: Install with apt (without ffmpeg) and test
         run: |
-          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ./dist/*.deb
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ./dist/*.deb
+          ! command -v ffmpeg
           dpkg -s libredrop | grep -E '^(Version|Depends|Recommends):'
           for f in /usr/bin/LibreDrop /usr/bin/LibreDropCLI /usr/share/applications/io.github.ohlincha.libredrop.desktop \
                    /usr/share/icons/hicolor/256x256/apps/io.github.ohlincha.libredrop.png /usr/share/doc/libredrop/copyright; do
@@ -75,8 +77,7 @@ jobs:
       - run: cmake --build build
       - run: ctest --test-dir build --output-on-failure
       - run: cmake --install build --prefix dist/LibreDrop
-      - name: Deploy Qt; add ffmpeg (LGPL build, BtbN)
-        env: { GH_TOKEN: "${{ github.token }}" }
+      - name: Deploy Qt
         run: |
           $d = "dist\LibreDrop"
           foreach ($exe in "LibreDrop.exe", "LibreDropCLI.exe") {
@@ -84,19 +85,6 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "windeployqt $exe failed" }
           }
           Copy-Item "$env:QT_ROOT_DIR\plugins\platforms\qoffscreen.dll" "$d\platforms\"
-          $zip = gh api repos/BtbN/FFmpeg-Builds/releases/latest -q '.assets[].name' |
-                 Where-Object { $_ -match '^ffmpeg-n[0-9.]+-latest-win64-lgpl-[0-9.]+\.zip$' } |
-                 Sort-Object { [version]($_ -replace '^ffmpeg-n([0-9.]+)-.*$', '$1') } | Select-Object -Last 1
-          if (-not $zip) { throw "no LGPL ffmpeg build found" }
-          "ffmpeg: $zip"
-          gh release download latest -R BtbN/FFmpeg-Builds -p $zip -D ffmpeg-dl
-          Expand-Archive "ffmpeg-dl\$zip" -DestinationPath ffmpeg-dl
-          $bin = Get-ChildItem -Recurse ffmpeg-dl -Filter ffmpeg.exe | Select-Object -First 1
-          Copy-Item $bin.FullName, (Join-Path $bin.DirectoryName ffprobe.exe) $d
-          $lic = Get-ChildItem -Recurse ffmpeg-dl -Filter LICENSE.txt | Select-Object -First 1
-          if ($lic) { Copy-Item $lic.FullName "$d\FFMPEG-LICENSE.txt" }
-          "ffmpeg (LGPL build from https://github.com/BtbN/FFmpeg-Builds, $zip); source: https://ffmpeg.org" |
-            Out-File "$d\FFMPEG-SOURCE.txt"
           Get-ChildItem -Recurse -File $d | ForEach-Object { $_.FullName.Substring((Resolve-Path $d).Path.Length + 1) }
           "total {0:N1} MB" -f ((Get-ChildItem -Recurse -File $d | Measure-Object Length -Sum).Sum / 1MB)
       - name: Test the deployed folder (clean PATH, no Qt environment)
@@ -140,7 +128,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: jurplel/install-qt-action@v4
         with: { version: "${{ env.QT_VERSION }}", cache: true }
-      - run: brew install eigen ninja ffmpeg
+      - run: brew install eigen ninja
       - name: Version
         run: echo "LD_VERSION=$(packaging/version.sh)" >> "$GITHUB_ENV"
       - run: >

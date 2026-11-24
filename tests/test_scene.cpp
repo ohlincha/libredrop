@@ -5,6 +5,7 @@
 #include <cmath>
 
 #include "core/image.h"
+#include "core/mjpeg.h"
 #include "core/report.h"
 #include "core/scene.h"
 #include "core/video.h"
@@ -118,6 +119,48 @@ private slots:
         QCOMPARE(int(back.drops.size()), 1);
         QCOMPARE(back.drops[0].id, 2);
         QCOMPARE(tracksCsv(r, Units{}, {2}).count(QLatin1Char('\n')), 1 + 8);
+    }
+
+    // written by LibreDrop, read without ffmpeg, frame times kept, same angles. (Synthetic edges are much sharper
+    // than real ones, 0.8 px against 4-8 px, so JPEG ringing matters more here: quality 80 already moves the 40°
+    // drop by 3°, while real recordings agree within 0.1° down to quality 60; knowledge/video.md.)
+    void mjpegRoundTrip() {
+        const GrayImage a = reflected(40, 160, 700), b = reflected(100, 100, 700);
+        QTemporaryDir dir;
+        const QString f = dir.filePath(QStringLiteral("t.mkv"));
+        MjpegWriter w;
+        QVERIFY(w.open(f, 1400, 500));
+        const double times[] = {0, 0.034, 0.066, 0.101, 2.5, 40.0};   // uneven, and a long gap (new cluster)
+        for (int i = 0; i < 6; ++i) QVERIFY(w.add(encodeJpeg(sideBySide(a, b, i < 3 ? 0 : 120), 90), times[i]));
+        QVERIFY(w.finish());
+        MjpegReader r;
+        QString err;
+        QVERIFY2(r.open(f, &err), qPrintable(err));
+        QCOMPARE(r.frames(), 6);
+        QCOMPARE(r.width(), 1400);
+        QCOMPARE(r.height(), 500);
+        for (int i = 0; i < 6; ++i) QVERIFY(std::abs(r.times()[std::size_t(i)] - times[i]) < 2e-4);
+        const VideoInfo info = probeVideo(f);
+        QVERIFY(info.native);
+        VideoOptions o;
+        o.minDuration = 0;
+        const VideoResult v = analyzeVideo(f, o);
+        QVERIFY2(v.ok, qPrintable(v.error));
+        QCOMPARE(int(v.tracks.size()), 2);
+        QVERIFY(std::abs(angleOf(v.tracks[0].points.back().drop.a) - 40) < 2);
+        QVERIFY(std::abs(angleOf(v.tracks[1].points.back().drop.a) - 100) < 3);
+        // compact copy: rows 150..449, still the same drops and angles
+        CompactOptions co;
+        co.y0 = 150, co.y1 = 449, co.quality = 85;
+        const QString g = dir.filePath(QStringLiteral("c.mkv"));
+        QVERIFY2(writeCompact(f, g, co, {}, &err), qPrintable(err));
+        QVERIFY(QFileInfo(g).size() < QFileInfo(f).size());
+        const VideoResult c = analyzeVideo(g, o);
+        QVERIFY2(c.ok, qPrintable(c.error));
+        QCOMPARE(c.info.h, 300);
+        QCOMPARE(int(c.tracks.size()), 2);
+        QVERIFY2(std::abs(angleOf(c.tracks[0].points.back().drop.a) - 40) < 2,
+                 qPrintable(QString::number(angleOf(c.tracks[0].points.back().drop.a))));
     }
 };
 

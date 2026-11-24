@@ -5,6 +5,8 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QDragEnterEvent>
 #include <QFile>
@@ -85,6 +87,9 @@ void MainWindow::buildUi() {
     QAction* expTable = file->addAction(tr("Export &table (CSV)…"), this, &MainWindow::exportTable);
     file->addAction(tr("Export &plot (PNG)…"), this, &MainWindow::exportPlot);
     expTable->setShortcut(QKeySequence::Save);
+    file->addAction(tr("Save &compact copy…"), this, &MainWindow::saveCompact)
+        ->setToolTip(tr("Copy of the recording with only the band around the drops, in grey, as JPEG frames: typically "
+                        "5–15× smaller, opens without ffmpeg, gives the same results."));
     file->addSeparator();
     file->addAction(tr("&Quit"), QKeySequence::Quit, this, &QWidget::close);
     QMenu* help = menuBar()->addMenu(tr("&Help"));
@@ -213,7 +218,7 @@ void MainWindow::buildUi() {
         frameTimer_->start();
     });
     connect(analyseButton_, &QPushButton::clicked, this, [this] {
-        if (watcher_.isRunning()) cancel();
+        if (watcher_.isRunning() || compactWatcher_.isRunning()) cancel();
         else analyse();
     });
     connect(liquid_, &QComboBox::currentIndexChanged, this, &MainWindow::liquidChanged);
@@ -411,7 +416,19 @@ void MainWindow::analysisDone() {
                                  .arg(result_.surface.angle * 180 / M_PI, 0, 'f', 2));
     updateTable();
     updatePlot();
-    showFrame(slider_->value());
+    // still at the start (often only the needle): show the first drop a second after it is free of the needle
+    if (slider_->value() == 0 && !result_.tracks.empty() && !isImage_) {
+        const ld::DropTrack* longest = &result_.tracks.front();
+        for (const ld::DropTrack& t : result_.tracks)
+            if (t.points.size() > longest->points.size()) longest = &t;
+        const ld::SeriesSet set = ld::seriesOf(result_, resultUnits_);
+        double t0 = longest->tContact();
+        for (const ld::DropSeries& d : set.drops)
+            if (d.id == longest->id && d.released() >= 0) t0 = d.t[std::size_t(d.released())];
+        slider_->setValue(frameAt(std::min(t0 + 1.0, longest->points.back().t)));   // (shows the frame)
+    } else {
+        showFrame(slider_->value());
+    }
 }
 
 void MainWindow::updateTable() {
@@ -600,9 +617,95 @@ void MainWindow::exportPlot() {
     else statusBar()->showMessage(tr("Plot written to %1").arg(f), 5000);
 }
 
+void MainWindow::saveCompact() {
+    if (path_.isEmpty() || isImage_ || compactWatcher_.isRunning()) return;
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("Save compact copy"));
+    auto* form = new QFormLayout(&dlg);
+    auto* intro = new QLabel(tr("Keeps the band around the surface and the drops, in grey, with each frame as a JPEG at "
+                                "the chosen quality and the original frame times. Quality 60–85 gives the same angles "
+                                "and volumes as the original within about 1%."));
+    intro->setWordWrap(true);
+    form->addRow(intro);
+    auto* quality = new QSpinBox;
+    quality->setRange(30, 100);
+    quality->setValue(QSettings().value("compactQuality", 85).toInt());
+    form->addRow(tr("JPEG quality"), quality);
+    auto* y0 = new QSpinBox, *y1 = new QSpinBox;
+    y0->setRange(0, std::max(0, info_.h - 1));
+    y1->setRange(0, std::max(0, info_.h - 1));
+    int s0 = 0, s1 = info_.h - 1;
+    if (haveResult_) ld::suggestCrop(result_, &s0, &s1);
+    y0->setValue(s0);
+    y1->setValue(s1);
+    auto* rows = new QHBoxLayout;
+    rows->addWidget(y0);
+    rows->addWidget(new QLabel(tr("to")));
+    rows->addWidget(y1);
+    form->addRow(tr("Rows kept"), rows);
+    if (!haveResult_) form->addRow(new QLabel(tr("(Analyse first to have the rows set to the drops.)")));
+    auto* stepBox = new QSpinBox;
+    stepBox->setRange(1, 1000);
+    stepBox->setPrefix(tr("1 in "));
+    stepBox->setSpecialValueText(tr("all"));
+    form->addRow(tr("Frames"), stepBox);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
+    form->addRow(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    if (dlg.exec() != QDialog::Accepted) return;
+    QSettings().setValue("compactQuality", quality->value());
+    const QFileInfo fi(path_);
+    const QString out = QFileDialog::getSaveFileName(this, tr("Save compact copy"),
+                                                     fi.dir().filePath(fi.completeBaseName() + tr("_compact.mkv")),
+                                                     tr("Matroska video (*.mkv)"));
+    if (out.isEmpty()) return;
+    if (QFileInfo(out).canonicalFilePath() == fi.canonicalFilePath()) {
+        QMessageBox::warning(this, tr("Save compact copy"), tr("Choose another file name than the recording's own."));
+        return;
+    }
+    ld::CompactOptions co;
+    co.quality = quality->value();
+    co.y0 = std::min(y0->value(), y1->value()), co.y1 = std::max(y0->value(), y1->value());
+    co.step = stepBox->value();
+    cancel_ = std::make_shared<std::atomic<bool>>(false);
+    co.cancel = cancel_.get();
+    const auto cancelFlag = cancel_;
+    const QString in = path_;
+    QPointer<MainWindow> self(this);
+    auto progress = [self](int done, int total) {
+        QMetaObject::invokeMethod(qApp, [self, done, total] {
+            if (!self) return;
+            self->progress_->setMaximum(total);
+            self->progress_->setValue(done);
+        }, Qt::QueuedConnection);
+    };
+    setBusy(true);
+    analyseButton_->setText(tr("Cancel"));
+    statusBar()->showMessage(tr("Writing %1…").arg(QFileInfo(out).fileName()));
+    disconnect(&compactWatcher_, nullptr, this, nullptr);
+    connect(&compactWatcher_, &QFutureWatcher<QString>::finished, this, [this, out, in] {
+        setBusy(false);
+        const QString err = compactWatcher_.result();
+        if (!err.isEmpty()) {
+            statusBar()->showMessage(err == QLatin1String("cancelled") ? tr("Cancelled.") : tr("Not saved: %1").arg(err));
+            return;
+        }
+        statusBar()->showMessage(tr("Saved %1: %2 MB (the recording: %3 MB).")
+                                     .arg(QFileInfo(out).fileName())
+                                     .arg(QFileInfo(out).size() / 1e6, 0, 'f', 1)
+                                     .arg(QFileInfo(in).size() / 1e6, 0, 'f', 1));
+    });
+    compactWatcher_.setFuture(QtConcurrent::run([in, out, co, cancelFlag, progress] {
+        QString err;
+        return ld::writeCompact(in, out, co, progress, &err) ? QString() : err;
+    }));
+}
+
 void MainWindow::closeEvent(QCloseEvent* e) {
     cancel();
     watcher_.waitForFinished();
+    compactWatcher_.waitForFinished();
     QThreadPool::globalInstance()->waitForDone();
     saveSettings();
     QSettings().setValue("window/geometry", saveGeometry());

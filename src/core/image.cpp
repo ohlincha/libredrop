@@ -53,6 +53,14 @@ GrayImage gaussianBlur(const GrayImage& im, double sigma) {
 }
 
 GrayImage fromQImage(const QImage& src) {
+    if (src.format() == QImage::Format_Grayscale8) {
+        GrayImage g(src.width(), src.height());
+        for (int y = 0; y < src.height(); ++y) {
+            const uchar* line = src.constScanLine(y);
+            for (int x = 0; x < src.width(); ++x) g.at(x, y) = line[x];
+        }
+        return g;
+    }
     const QImage im = src.convertToFormat(QImage::Format_RGB32);
     GrayImage g(im.width(), im.height());
     for (int y = 0; y < im.height(); ++y) {
