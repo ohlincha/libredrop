@@ -3,7 +3,7 @@
 Goal: real footage for developing and testing the analysis, mainly battery separators
 (cellulose/pulp, nylon) with water and organic carbonates.
 
-Tool: `../ossila/goniometer_capture.py` (copy to beryllium). `--video SECONDS` records the MJPEG stream
+Tool: `tools/goniometer_capture.py`, installed as `libredrop-capture` (copy to beryllium). `--video SECONDS` records the MJPEG stream
 without re-encoding (.mkv) plus a .json with settings, note and measured frame rate.
 
 Setup: backlight on; separator taped flat on a glass slide; camera 1-2 degrees above the surface

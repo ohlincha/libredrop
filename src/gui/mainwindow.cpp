@@ -2,6 +2,8 @@
 
 #include "comparedialog.h"
 #include "library.h"
+#include "projectdialogs.h"
+#include "core/pendant.h"
 
 #include <QAction>
 #include <QApplication>
@@ -118,6 +120,26 @@ void MainWindow::buildUi() {
     proj->addAction(tr("&Open project…"), this, [this] {
         const QString d = QFileDialog::getExistingDirectory(this, tr("Open project folder"));
         if (!d.isEmpty()) openProject(d);
+    });
+    proj->addAction(tr("&Liquids…"), this, [this] {
+        if (!library_->hasProject()) return;
+        if (editLiquids(this, library_->project())) library_->save();
+    });
+    proj->addAction(tr("&Calibration…"), this, [this] {
+        if (!library_->hasProject()) return;
+        auto needle = [this]() -> double {   // the needle's width in the frame at the slider (above the surface)
+            if (path_.isEmpty() || isImage_) return ld::kNaN;
+            ld::GrayImage g;
+            QString err;
+            if (!ld::readFrameAt(path_, info_, slider_->value(), &g, &err)) return ld::kNaN;
+            const int bottom = haveResult_ ? int(result_.surface.p0.y) - 5 : g.h;
+            const ld::PendantResult r = ld::analyzePendant(ld::crop(g, 0, 0, g.w, std::clamp(bottom, 20, g.h)), {});
+            return r.needleWidthPx;
+        };
+        if (editCalibrations(this, library_->project(), info_.w, scale_->value(), needle)) {
+            library_->save();
+            applyProjectContext();
+        }
     });
     proj->addAction(tr("&Add recordings…"), this, [this] {
         if (!library_->hasProject()) {

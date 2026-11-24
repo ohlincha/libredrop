@@ -746,10 +746,6 @@ PendantResult analyzePendant(const GrayImage& im, const PendantOptions& opt) {
         out.error = QStringLiteral("no needle with a hanging drop from the top of the image");
         return out;
     }
-    if (nb->y1 >= im.h - 2) {
-        out.error = QStringLiteral("the drop reaches the bottom of the image (or touches the surface)");
-        return out;
-    }
     const int id = nb->id;
     auto in = [&](int x, int y) { return x >= 0 && y >= 0 && x < im.w && y < im.h && lab[std::size_t(y) * im.w + x] == id; };
     // edges per row (sub-pixel: where the grey level crosses T)
@@ -777,7 +773,11 @@ PendantResult analyzePendant(const GrayImage& im, const PendantOptions& opt) {
     }
     std::sort(top.begin(), top.end());
     const double nw = top[top.size() / 2];
-    out.needleWidthPx = nw;
+    out.needleWidthPx = nw;   // (kept even if the drop below can't be used: it calibrates the scale)
+    if (nb->y1 >= im.h - 2) {
+        out.error = QStringLiteral("the drop reaches the bottom of the image (or touches the surface)");
+        return out;
+    }
     int tip = -1;
     for (int i = 0; i + 3 < rows && tip < 0; ++i) {
         bool wider = true;

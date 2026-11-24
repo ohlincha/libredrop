@@ -6,7 +6,7 @@ that spread and soak in, so video and dynamic analysis come first. C++17, Qt 6 (
 toolchain as LibreRamen (`source ~/opt/libreramen-env.sh`, build dir `~/opt/build-libredrop`).
 
 Read `knowledge/index.md` first. Hardware limits: no tilting stage; liquid is deposited by hand with a syringe.
-The camera (UVC, `../ossila/goniometer_capture.py`) is at work on beryllium, not on this desktop: say when
+The camera (UVC, `tools/goniometer_capture.py`, installed as `libredrop-capture`) is at work on beryllium, not on this desktop: say when
 something is untested on real images.
 
 - Build/test: `cmake -S . -B ~/opt/build-libredrop && cmake --build ~/opt/build-libredrop && ctest --test-dir ~/opt/build-libredrop`
