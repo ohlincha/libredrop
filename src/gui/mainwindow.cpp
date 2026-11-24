@@ -61,11 +61,13 @@ struct Liquid {
     double density, tension;   // kg/m³, mN/m (about 20–25 °C)
 };
 // Literature values near room temperature; enter measured ones under Custom for accurate Young–Laplace volumes.
+// 25 °C (PC: γ at 23 °C); sources in the project's liquid table (core/project.cpp, defaultLiquids)
 const Liquid kLiquids[] = {
     {"Water", 997, 72.0},
-    {"Dimethyl carbonate (DMC)", 1069, 28.5},
-    {"Diethyl carbonate (DEC)", 975, 26.7},
-    {"Propylene carbonate (PC)", 1205, 41.1},
+    {"Dimethyl carbonate (DMC)", 1063, 28.1},
+    {"Diethyl carbonate (DEC)", 969, 26.3},
+    {"Propylene carbonate (PC)", 1200, 41.3},
+    {"1 M LiPF6 in EC:DMC 1:1 (LP30)", 1303, 29.4},
 };
 
 // px/mm of the Ossila camera per frame width, from the 10 mm calibration sphere (knowledge/camera-scale.md)
@@ -413,7 +415,9 @@ void MainWindow::buildUi() {
         connect(qobject_cast<QAbstractSpinBox*>(w), &QAbstractSpinBox::editingFinished, this, &MainWindow::saveSettings);
 
     QSettings st;
-    liquid_->setCurrentIndex(std::clamp(st.value("liquid", 0).toInt(), 0, liquid_->count() - 1));
+    // by name (the list may grow); older settings kept the position
+    const int byName = liquid_->findText(st.value("liquidName").toString());
+    liquid_->setCurrentIndex(byName >= 0 ? byName : std::clamp(st.value("liquid", 0).toInt(), 0, liquid_->count() - 1));
     liquidChanged();
     if (liquid_->currentIndex() == liquid_->count() - 1) {
         density_->setValue(st.value("density", 1000).toDouble());
@@ -582,8 +586,9 @@ void MainWindow::liquidChanged() {
 void MainWindow::loadEvaporation() {
     QSettings st;
     const int i = liquid_->currentIndex();
-    evaporation_->setValue(st.value(QStringLiteral("evaporation/%1").arg(i), 0.0).toDouble());
-    evaporationSource_ = st.value(QStringLiteral("evaporationSource/%1").arg(i)).toString();
+    const QString key = liquid_->itemText(i).toHtmlEscaped().replace(QLatin1Char('/'), QLatin1Char('-'));
+    evaporation_->setValue(st.value(QStringLiteral("evaporationOf/%1").arg(key), st.value(QStringLiteral("evaporation/%1").arg(i), 0.0)).toDouble());
+    evaporationSource_ = st.value(QStringLiteral("evaporationSourceOf/%1").arg(key), st.value(QStringLiteral("evaporationSource/%1").arg(i))).toString();
 }
 
 void MainWindow::updateSoakHint() {
@@ -673,13 +678,15 @@ void MainWindow::useAsGlassReference() {
 void MainWindow::saveSettings() const {
     QSettings st;
     st.setValue("liquid", liquid_->currentIndex());
+    st.setValue("liquidName", liquid_->currentText());
     st.setValue("density", density_->value());
     st.setValue("tension", tension_->value());
     st.setValue("scale", scale_->value());
     st.setValue("step", step_->value());
     st.setValue("soakTimes", soakTimes_->text());
-    st.setValue(QStringLiteral("evaporation/%1").arg(liquid_->currentIndex()), evaporation_->value());
-    st.setValue(QStringLiteral("evaporationSource/%1").arg(liquid_->currentIndex()), evaporationSource_);
+    const QString key = liquid_->currentText().toHtmlEscaped().replace(QLatin1Char('/'), QLatin1Char('-'));
+    st.setValue(QStringLiteral("evaporationOf/%1").arg(key), evaporation_->value());
+    st.setValue(QStringLiteral("evaporationSourceOf/%1").arg(key), evaporationSource_);
     if (sinceContact_) st.setValue("sinceContact", sinceContact_->isChecked());
 }
 

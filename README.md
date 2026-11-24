@@ -49,6 +49,19 @@ yet.
    sample name (from the file name without date/time and repeat number; double-click to change) are averaged:
    mean ± standard deviation of the ticked drops; Export CSV gives each drop and the per-sample means and SDs.
 
+## Projects (library)
+
+*Project ▸ New project…* makes a folder for a study: `project.json` (samples, recordings, liquids with literature
+sources, evaporation references per liquid and date, calibrations), `recordings/`, `results/` (cached) and
+`conditions.csv` (room temperature and humidity from a TEMPer/TEMPerHUM USB sensor, if attached; names and offsets
+from USB Thermo Logger). The Library panel lists samples and recordings; *Add…* files recordings by the capture
+tool's `.json`; opening a recording sets its liquid, scale and that day's evaporation correction; *Compare* averages
+the selected samples. *Project ▸ Liquids…* and *Calibration…* edit the tables (scale from the needle's measured
+diameter). One user at a time; copy the folder to back it up or share it.
+
+Recording (Linux, beryllium): `libredrop-capture --video 20 --size 640x480 --fps 120 --sample kraft-A --side front
+--direction MD --liquid DMC --volume 2` (installed with the .deb; needs python3-opencv, ffmpeg, v4l-utils).
+
 S is proportional to the image scale: compare samples measured at the same scale. Not yet tried on real
 separators.
 

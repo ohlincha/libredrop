@@ -75,14 +75,48 @@ LiquidData liquidOf(const QJsonObject& o) {
     return l;
 }
 
-// The starting liquid table of a new project. Water: standard values (IAPWS; Owens–Wendt split 21.8/51.0).
-// The carbonates' values are approximate and still to be checked against literature (marked in "source").
+// The starting liquid table of a new project, from literature (collected 2026-11-25; see each "source").
+// Test-liquid splits (dispersive/polar) are Ström, Fredriksson & Stenius 1987 (J. Colloid Interface Sci. 119, 352),
+// defined at 20 °C and checked only through citing papers. NaN: no sourced value found.
 std::vector<LiquidData> defaultLiquids() {
+    const double n = kNaN;
     return {
-        {"water", 997.0, 72.0, 0.89, 21.8, 51.0, 25, "IAPWS (ρ, γ, η); Owens–Wendt/Fowkes split 21.8/51.0"},
-        {"DMC", 1069, 28.5, kNaN, kNaN, kNaN, 25, "approximate, to be checked"},
-        {"DEC", 975, 26.7, kNaN, kNaN, kNaN, 25, "approximate, to be checked"},
-        {"PC", 1205, 41.1, kNaN, kNaN, kNaN, 25, "approximate, to be checked"},
+        {"water", 997.05, 71.97, 0.890, 21.8, 51.0, 25,
+         "ρ, η: CRC/IAPWS; γ: IAPWS, Vargaftik 1983 doi:10.1063/1.555688; split 21.8/51.0: Ström 1987 (at 72.8, 20 °C), "
+         "Owens–Wendt 1969 doi:10.1002/app.1969.070130815"},
+        {"diiodomethane", 3325, 50.8, n, 50.8, 0.0, 20,
+         "γ, split: Ström 1987 (20 °C); measured 50.0–50.5 at 23 °C (doi:10.1021/acs.langmuir.3c00910, "
+         "doi:10.1016/j.jcis.2018.06.044); ρ: CRC. uncertain: other splits in use (49.0/1.8, 44.1/6.7)"},
+        {"ethylene glycol", 1110, 47.99, 16.1, 30.9, 16.8, 25,
+         "γ, η: CRC 91st (25 °C); ρ estimated for 25 °C from CRC 1113.5 (20 °C). uncertain: split 30.9/16.8 (Ström 1987, "
+         "not checked; others 29/19, 32.8/16.0)"},
+        {"formamide", 1133, 58.2, n, 39.0, 19.0, 20,
+         "ρ: CRC (20 °C); γ: 58.2 (20 °C), 58.2 at 23 °C doi:10.1021/acs.langmuir.3c00910. uncertain: split 39.0/19.0 "
+         "(Ström 1987, secondary only)"},
+        {"glycerol", 1261, 64.0, 934, 34.0, 30.0, 20,
+         "ρ: CRC (20 °C); γ: 64.0 (Ström 1987); η: 934 at 25 °C (CRC; 954 elsewhere), depends strongly on water "
+         "content. uncertain: split 34/30 (secondary only)"},
+        {"n-hexadecane", 770.1, 27.47, 3.03, 27.47, 0.0, 25,
+         "ρ: CRC 95th; γ: 27.47 (ECHA), 27.6 at 23 °C doi:10.1021/acs.langmuir.3c00910; η: CRC 99th; purely dispersive"},
+        {"DMC", 1063.4, 28.08, 0.59, n, n, 25,
+         "ρ, γ: doi:10.1021/je800594e (25 °C); γ 28.55 at 23 °C doi:10.1016/j.jcis.2018.06.044; η: Xu 2004 "
+         "doi:10.1021/cr030203g, Logan 2018 doi:10.1149/2.0271802jes. uncertain: η 0.59–0.66 in sources"},
+        {"DEC", 969.2, 26.26, 0.75, n, n, 25,
+         "ρ: doi:10.1016/j.jct.2008.12.010; γ: Zhao 2010 doi:10.1016/j.fluid.2010.03.040 (25.43 in j.jct.2008.12.010); "
+         "η: Xu 2004 doi:10.1021/cr030203g"},
+        {"EMC", 1006, n, 0.65, n, n, 25,
+         "ρ, η: Xu 2004 doi:10.1021/cr030203g, Logan 2018. γ: no peer-reviewed value found"},
+        {"PC", 1200, 41.3, 2.53, n, n, 25,
+         "ρ, η: Xu 2004 doi:10.1021/cr030203g; γ: 41.28 at 23 °C doi:10.1016/j.jcis.2018.06.044"},
+        {"EC", 1321, n, 1.90, n, n, 40,
+         "40 °C (solid below 36.4 °C). ρ: CRC 79th (39 °C), Xu 2004; η: Xu 2004. γ: in Naejus 1997 J. Chem. Thermodyn. "
+         "29, 1503 (not read)"},
+        {"LP30", 1303, 29.4, n, n, n, 25,
+         "1 M LiPF6 in EC:DMC 1:1. Hofmann 2015 doi:10.3390/ijms160920258 (0.787 mol/kg, i.e. ~0.9 M; pendant drop, "
+         "glovebox); 30.3 in Dahbi 2012 doi:10.1021/ie203066x (secondary). η: 4.4 at 20 °C (Hofmann)"},
+        {"LP57", 1200, n, 2.75, n, n, 25,
+         "1 M LiPF6 in EC:EMC 3:7. uncertain: ρ quoted secondhand; η interpolated from Logan 2018 "
+         "doi:10.1149/2.0271802jes (3.05 at 20 °C, 2.47 at 30 °C, 1.0 mol/kg). γ: not found"},
     };
 }
 
