@@ -72,6 +72,7 @@ struct PlotStyle {
     double tMin = kNaN, tMax = kNaN;   // x range (else from the data)
     int highlight = -1;                // drawn thicker
     bool legend = true;
+    bool markerNote = true;            // "○ needle still in the drop" at the right under the panels
     int fontPx = 14;
     QColor background = Qt::white, text = Qt::black, grid = QColor(0xeeeeee);
 };

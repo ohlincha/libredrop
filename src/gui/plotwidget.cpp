@@ -7,6 +7,8 @@ PlotWidget::PlotWidget(QWidget* parent) : QWidget(parent) {
     setMinimumSize(300, 300);
     style_.sinceContact = false;
     style_.fontPx = 12;
+    style_.markerNote = false;
+    setToolTip(tr("Hollow markers: the needle is still in the drop. Click to show that moment."));
 }
 
 void PlotWidget::setSeries(const ld::SeriesSet& s) {

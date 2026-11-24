@@ -303,9 +303,10 @@ PlotGeometry drawSeries(QPainter& p, const QRect& area, const SeriesSet& r, cons
         p.setClipping(false);
     }
     p.setPen(st.text);
-    p.drawText(QRect(area.left() + left, area.bottom() - lh, area.width() - left - right, lh), Qt::AlignCenter,
-               st.sinceContact ? QStringLiteral("time since the drop touched the surface (s); hollow markers: needle still in the drop")
-                               : QStringLiteral("time (s); hollow markers: needle still in the drop"));
+    // axis label in the middle; the marker note (if wanted) at the right
+    const QRect row(area.left() + left, area.bottom() - lh, area.width() - left - right, lh);
+    p.drawText(row, Qt::AlignCenter, st.sinceContact ? QStringLiteral("time since contact (s)") : QStringLiteral("time (s)"));
+    if (st.markerNote) p.drawText(row, Qt::AlignRight | Qt::AlignVCenter, QStringLiteral("○ needle still in the drop"));
     for (std::size_t ti = 0; st.legend && ti < r.drops.size(); ++ti) {
         p.setPen(QPen(dropColor(r.drops[ti].id), 3));
         const int x = area.left() + left + (st.fontPx * 6 + 20) * int(ti % std::size_t(perRow));
