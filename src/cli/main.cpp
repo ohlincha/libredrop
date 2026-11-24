@@ -15,6 +15,7 @@
 
 #include "core/drop.h"
 #include "core/image.h"
+#include "core/pendant.h"
 #include "core/report.h"
 #include "core/scene.h"
 #include "core/video.h"
@@ -188,6 +189,52 @@ int main(int argc, char** argv) {
             out(QStringLiteral("table: ") + csv);
         }
         if (!savePlot(a, set)) return 1;
+        return 0;
+    }
+    if (a[0] == QLatin1String("pendant")) {   // surface tension from a hanging drop (image, or video frames)
+        ld::PendantOptions po;
+        po.pxPerMm = arg(a, "--scale", "0").toDouble();
+        po.densityDiff = arg(a, "--density", "997").toDouble();
+        po.needleMm = arg(a, "--needle", "0").toDouble();
+        const int bottom = arg(a, "--bottom", "0").toInt();   // use rows above this one only (the surface)
+        auto run = [&](const ld::GrayImage& full, const QString& what) {
+            const ld::GrayImage im = bottom > 0 ? ld::crop(full, 0, 0, full.w, std::min(bottom, full.h)) : full;
+            const ld::PendantResult r = ld::analyzePendant(im, po);
+            if (!r.ok) {
+                out(what + QStringLiteral(": ") + r.error);
+                return;
+            }
+            out(QStringLiteral("%1: gamma %2 mN/m, beta %3, apex radius %4 px, needle %5 px, volume %6 uL, Wo %7, rms %8 px")
+                    .arg(what).arg(r.gamma, 0, 'f', 2).arg(r.bond, 0, 'f', 4).arg(r.apexRadiusPx, 0, 'f', 1)
+                    .arg(r.needleWidthPx, 0, 'f', 1).arg(r.volumeUl, 0, 'f', 3).arg(r.worthington, 0, 'f', 2).arg(r.rmsPx, 0, 'f', 2));
+            for (const ld::Check& c : r.checks) out(QStringLiteral("  ") + c.message);
+        };
+        const QString path = a.value(1);
+        const QImage img(path);
+        if (!img.isNull()) {
+            run(ld::fromQImage(img), path);
+            return 0;
+        }
+        const ld::VideoInfo info = ld::probeVideo(path);
+        if (!info.error.isEmpty()) {
+            out(info.error);
+            return 1;
+        }
+        const double t0 = arg(a, "--from", "0").toDouble(), t1 = arg(a, "--to", QString::number(t0)).toDouble();
+        const double every = arg(a, "--every", "0").toDouble();
+        double last = -1e9;
+        for (int i = 0; i < int(info.times.size()); ++i) {
+            const double t = info.times[std::size_t(i)];
+            if (t < t0 - 1e-6 || t > t1 + 1e-6 || t - last < every - 1e-6) continue;
+            last = t;
+            ld::GrayImage f;
+            QString err;
+            if (!ld::readFrameAt(path, info, i, &f, &err)) {
+                out(err);
+                return 1;
+            }
+            run(f, QStringLiteral("%1 s").arg(t, 0, 'f', 3));
+        }
         return 0;
     }
     if (a[0] == QLatin1String("scene")) {

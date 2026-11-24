@@ -6,6 +6,7 @@
 #include <functional>
 #include <numeric>
 
+#include "pendant.h"
 #include "scene.h"
 #include "younglaplace.h"
 
@@ -720,6 +721,177 @@ DropAnalysis analyzeDrop(const GrayImage& im, const DropOptions& opt) {
         addCheck(a, Check::Info, QStringLiteral("lowangle"),
                  QStringLiteral("Below 10° the height–width method is the most robust; small errors in the baseline matter more."));
     return a;
+}
+
+
+PendantResult analyzePendant(const GrayImage& im, const PendantOptions& opt) {
+    PendantResult out;
+    if (im.w < 20 || im.h < 20) {
+        out.error = QStringLiteral("image too small");
+        return out;
+    }
+    const double bg = opt.background >= 0 ? opt.background : percentile(im, 0.9);
+    const double dk = opt.dark >= 0 ? opt.dark : percentile(im, 0.01);
+    const double T = 0.5 * (bg + dk);
+    if (bg - dk < 30) {
+        out.error = QStringLiteral("too little contrast");
+        return out;
+    }
+    std::vector<int> lab;
+    const std::vector<Blob> blobs = labelDark(im, T, &lab);
+    const Blob* nb = nullptr;   // needle and drop: the largest dark region touching the top edge
+    for (const Blob& b : blobs)
+        if (b.y0 == 0 && (!nb || b.n > nb->n)) nb = &b;
+    if (!nb || nb->y1 - nb->y0 < 20) {
+        out.error = QStringLiteral("no needle with a hanging drop from the top of the image");
+        return out;
+    }
+    if (nb->y1 >= im.h - 2) {
+        out.error = QStringLiteral("the drop reaches the bottom of the image (or touches the surface)");
+        return out;
+    }
+    const int id = nb->id;
+    auto in = [&](int x, int y) { return x >= 0 && y >= 0 && x < im.w && y < im.h && lab[std::size_t(y) * im.w + x] == id; };
+    // edges per row (sub-pixel: where the grey level crosses T)
+    const int rows = nb->y1 - nb->y0 + 1;
+    std::vector<double> xl(rows, kNaN), xr(rows, kNaN);
+    for (int y = nb->y0; y <= nb->y1; ++y) {
+        int a = -1, b = -1;
+        for (int x = nb->x0; x <= nb->x1; ++x)
+            if (in(x, y)) {
+                if (a < 0) a = x;
+                b = x;
+            }
+        if (a < 1 || b >= im.w - 1) continue;
+        const double v0 = im.at(a - 1, y), v1 = im.at(a, y), w0 = im.at(b, y), w1 = im.at(b + 1, y);
+        xl[std::size_t(y - nb->y0)] = a - 1 + std::clamp((v0 - T) / std::max(1e-6, v0 - v1), 0.0, 1.0);
+        xr[std::size_t(y - nb->y0)] = b + std::clamp((T - w0) / std::max(1e-6, w1 - w0), 0.0, 1.0);
+    }
+    // the needle: the width of the top rows; its tip: the first row from which the outline is wider for good
+    std::vector<double> top;
+    for (int i = 0; i < std::max(5, rows / 8); ++i)
+        if (std::isfinite(xl[std::size_t(i)])) top.push_back(xr[std::size_t(i)] - xl[std::size_t(i)]);
+    if (top.size() < 3) {
+        out.error = QStringLiteral("needle not found");
+        return out;
+    }
+    std::sort(top.begin(), top.end());
+    const double nw = top[top.size() / 2];
+    out.needleWidthPx = nw;
+    int tip = -1;
+    for (int i = 0; i + 3 < rows && tip < 0; ++i) {
+        bool wider = true;
+        for (int k = 0; k < 4 && wider; ++k)
+            wider = std::isfinite(xl[std::size_t(i + k)]) && xr[std::size_t(i + k)] - xl[std::size_t(i + k)] > nw + std::max(1.5, 0.04 * nw);
+        if (wider) tip = i;
+    }
+    if (tip < 0 || rows - tip < 15) {
+        out.error = QStringLiteral("no drop below the needle (or the drop is too small)");
+        return out;
+    }
+    out.needleTipY = nb->y0 + tip;
+    const double dropH = nb->y1 + 1 - out.needleTipY;
+    // edge points: rows (sides) and, near the apex where the outline is flat, columns (bottom)
+    std::vector<Pt> P;
+    double maxHalf = 0, axis = 0;
+    int nAxis = 0;
+    for (int i = tip + 2; i < rows; ++i) {
+        if (!std::isfinite(xl[std::size_t(i)])) continue;
+        const double y = nb->y0 + i;
+        axis += 0.5 * (xl[std::size_t(i)] + xr[std::size_t(i)]), ++nAxis;
+        maxHalf = std::max(maxHalf, 0.5 * (xr[std::size_t(i)] - xl[std::size_t(i)]));
+        if (y > nb->y1 - 0.15 * dropH) continue;
+        P.push_back({xl[std::size_t(i)], y});
+        P.push_back({xr[std::size_t(i)], y});
+    }
+    axis /= std::max(1, nAxis);
+    double apex = nb->y1;
+    for (int x = nb->x0; x <= nb->x1; ++x) {
+        int yb = -1;
+        for (int y = nb->y1; y >= out.needleTipY && yb < 0; --y)
+            if (in(x, y)) yb = y;
+        if (yb < 0 || yb < nb->y1 - 0.35 * dropH || yb + 1 >= im.h) continue;
+        const double a = im.at(x, yb), c = im.at(x, yb + 1);
+        const double ye = yb + std::clamp((T - a) / std::max(1e-6, c - a), 0.0, 1.0);
+        P.push_back({double(x), ye});
+        apex = std::max(apex, ye);
+    }
+    if (P.size() < 30) {
+        out.error = QStringLiteral("too few edge points");
+        return out;
+    }
+    out.edge = P;
+    // fit: axis x0, apex y, apex radius b, β < 0
+    const double sMax = 2.5 * (dropH + 2 * maxHalf) / std::max(1.0, maxHalf);
+    // the profile only up to the needle tip (beyond it the solution widens again: not part of the drop)
+    auto upTo = [](Profile pr, double zMax) {
+        std::size_t n = 0;
+        while (n < pr.Z.size() && pr.Z[n] <= zMax) ++n;
+        for (auto* v : {&pr.S, &pr.X, &pr.Z, &pr.phi, &pr.V}) v->resize(std::max<std::size_t>(n, 2));
+        return pr;
+    };
+    auto betaOf = [](double q) { return -std::clamp(std::abs(q), 1e-4, 5.0); };
+    auto res = [&](const Eigen::VectorXd& q) {
+        const double b = std::max(1.0, q[2]);
+        const Profile pr = upTo(integrate(betaOf(q[3]), M_PI - 1e-3, 0.01, sMax * maxHalf / b), (q[1] - out.needleTipY) / b + 0.05);
+        Eigen::VectorXd r(P.size());
+        for (std::size_t i = 0; i < P.size(); ++i)
+            r[Eigen::Index(i)] = b * profileDistance(pr, std::abs(P[i].x - q[0]) / b, (q[1] - P[i].y) / b);
+        return r;
+    };
+    Eigen::VectorXd best;
+    double bestCost = 1e300;
+    for (double b0 : {0.8, 1.0})
+        for (double beta0 : {0.15, 0.35, 0.6}) {
+            Eigen::VectorXd p(4);
+            p << axis, apex, b0 * maxHalf, beta0;
+            Eigen::Vector4d step(1e-3 * maxHalf, 1e-3 * maxHalf, 1e-3 * maxHalf, 1e-4);
+            p = levenbergMarquardt(res, p, step, 80);
+            const double c = res(p).squaredNorm();
+            if (c < bestCost) bestCost = c, best = p;
+        }
+    const double b = best[2], beta = betaOf(best[3]);
+    out.axisX = best[0], out.apexY = best[1], out.apexRadiusPx = b, out.bond = beta;
+    out.rmsPx = std::sqrt(bestCost / double(P.size()));
+    const Profile pr = upTo(integrate(beta, M_PI - 1e-4, 0.002, sMax * maxHalf / b), (out.apexY - out.needleTipY) / b + 0.05);
+    double xt = 0, vt = 0;
+    const double zt = (out.apexY - out.needleTipY) / b;
+    if (pr.atDepth(zt, &xt, nullptr, &vt)) {
+        out.volumePx3 = vt * b * b * b;
+        std::vector<Pt> half;
+        for (std::size_t i = 0; i < pr.Z.size() && pr.Z[i] <= zt; i += 4) half.push_back({pr.X[i] * b, out.apexY - pr.Z[i] * b});
+        half.push_back({xt * b, out.needleTipY});
+        for (auto it = half.rbegin(); it != half.rend(); ++it) out.fitted.push_back({out.axisX - it->x, it->y});
+        for (const Pt& q : half) out.fitted.push_back({out.axisX + q.x, q.y});
+    }
+    auto check = [&](Check::Level l, const char* cid, const QString& m) { out.checks.push_back({l, QString::fromLatin1(cid), m}); };
+    if (opt.needleMm > 0) {
+        out.scaleFromNeedle = nw / opt.needleMm;
+        if (opt.pxPerMm > 0 && std::abs(out.scaleFromNeedle / opt.pxPerMm - 1) > 0.03)
+            check(Check::Warning, "scale",
+                  QStringLiteral("The needle measures %1 mm at this scale, not %2 mm: check the scale (the needle gives %3 px/mm).")
+                      .arg(nw / opt.pxPerMm, 0, 'f', 3).arg(opt.needleMm, 0, 'f', 3).arg(out.scaleFromNeedle, 0, 'f', 1));
+    }
+    if (out.rmsPx > 1.0)
+        check(Check::Warning, "fit", QStringLiteral("The outline fits the Young–Laplace shape poorly (%1 px rms).").arg(out.rmsPx, 0, 'f', 2));
+    if (opt.pxPerMm > 0 && opt.densityDiff > 0) {
+        const double bm = b / opt.pxPerMm * 1e-3;
+        out.gamma = opt.densityDiff * 9.81 * bm * bm / -beta * 1e3;
+        if (std::isfinite(out.volumePx3)) {
+            out.volumeUl = out.volumePx3 / std::pow(opt.pxPerMm, 3);
+            const double D = nw / opt.pxPerMm * 1e-3;
+            out.worthington = opt.densityDiff * 9.81 * out.volumeUl * 1e-9 / (M_PI * out.gamma * 1e-3 * D);
+            if (out.worthington < 0.2)
+                check(Check::Warning, "worthington",
+                      QStringLiteral("The drop is nearly spherical (Worthington number %1): surface tension is uncertain; "
+                                     "a larger drop gives a better value.").arg(out.worthington, 0, 'f', 2));
+        }
+    } else {
+        check(Check::Info, "units", QStringLiteral("Surface tension needs the scale and the density difference."));
+    }
+    out.ok = std::isfinite(b) && b > 0 && std::isfinite(beta) && out.rmsPx < 3;
+    if (!out.ok) out.error = QStringLiteral("the outline could not be fitted (%1 px rms)").arg(out.rmsPx, 0, 'f', 1);
+    return out;
 }
 
 }  // namespace ld
