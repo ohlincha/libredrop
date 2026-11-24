@@ -301,17 +301,12 @@ PlotGeometry drawSeries(QPainter& p, const QRect& area, const SeriesSet& r, cons
             p.drawLine(QPointF(X(st.cursor), box.top()), QPointF(X(st.cursor), box.bottom()));
         }
         p.setClipping(false);
-        if (std::isfinite(st.cursor) && k == 0 && st.cursor >= tMin && st.cursor <= tMax) {   // the shown frame's time
-            const QString label = QStringLiteral("%1 s").arg(st.cursor, 0, 'f', 2);
-            const int tw = p.fontMetrics().horizontalAdvance(label) + 8;
-            const int cx = int(X(st.cursor));
-            QRect r(cx + 3, box.top() + 2, tw, lh - 2);   // inside the panel, beside the line
-            if (r.right() > box.right() - 2) r.moveRight(cx - 3);
-            p.setPen(Qt::NoPen);
-            p.setBrush(st.background);
-            p.drawRect(r);
-            p.setPen(st.text);
-            p.drawText(r, Qt::AlignCenter, label);
+        if (std::isfinite(st.cursor) && k == 0) {   // the shown frame's time: right end of the title row (if it fits)
+            const QString label = QStringLiteral("- - frame at %1 s").arg(st.cursor, 0, 'f', 2);
+            if (p.fontMetrics().horizontalAdvance(panels[k].title) + p.fontMetrics().horizontalAdvance(label) + 20 < box.width()) {
+                p.setPen(st.text);
+                p.drawText(QRect(box.left(), box.top() - lh, box.width(), lh - 2), Qt::AlignRight | Qt::AlignVCenter, label);
+            }
         }
     }
     p.setPen(st.text);
