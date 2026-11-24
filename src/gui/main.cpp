@@ -57,6 +57,12 @@ int main(int argc, char** argv) {
             QTimer::singleShot(std::max(0, (ms > 0 ? ms : 3000) - int(1000 * play)), &w, [&w] {
                 if (auto* b = w.findChild<QAbstractButton*>(QStringLiteral("play"))) b->click();
             });
+        // LIBREDROP_SHOT_CLICK=objectName: click that button 1 s before the screenshot
+        const QString click = qEnvironmentVariable("LIBREDROP_SHOT_CLICK");
+        if (!click.isEmpty())
+            QTimer::singleShot(std::max(0, (ms > 0 ? ms : 3000) - 1000), &w, [&w, click] {
+                if (auto* b = w.findChild<QAbstractButton*>(click)) b->click();
+            });
         // LIBREDROP_SHOT_TAB=n: show that tab of the drop table
         const int tab = qEnvironmentVariableIntValue("LIBREDROP_SHOT_TAB");
         QTimer::singleShot(ms > 0 ? ms : 3000, &w, [&w, shot, tab] {

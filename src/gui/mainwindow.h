@@ -69,6 +69,12 @@ private:
     class QLineEdit* soakTimes_ = nullptr;
     QDoubleSpinBox* evaporation_ = nullptr;
     ld::SoakOptions soakOptions() const;
+    QLabel* soakHint_ = nullptr;           // what to do first (glass reference) / which correction is used
+    class QPushButton* glassRef_ = nullptr;
+    QString evaporationSource_;            // where the current liquid's evaporation value came from
+    void updateSoakHint();
+    void useAsGlassReference();
+    void loadEvaporation();                // the current liquid's stored value
     QSplitter* split_ = nullptr;   // frame | side panel
     void fitTableWidth();                 // widen the side panel so every table column shows
     QLabel* checks_ = nullptr;

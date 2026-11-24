@@ -99,6 +99,19 @@ void MainWindow::buildUi() {
     file->addAction(tr("&Quit"), QKeySequence::Quit, this, &QWidget::close);
     QMenu* help = menuBar()->addMenu(tr("&Help"));
     help->addAction(tr("Open &example (water on glass)"), this, &MainWindow::openExample);
+    help->addAction(tr("&Measuring separators…"), this, [this] {
+        QMessageBox::information(this, tr("Measuring separators"), tr(
+            "<p><b>1. Set up</b> (once per camera mode): the scale, and the liquid (Measurement ▸ Liquid).</p>"
+            "<p><b>2. Glass first</b> (once per liquid and day): record a drop of the liquid on a clean glass slide for "
+            "as long as you will record on the separators. Open it, analyse, then Soaking tab ▸ <i>Use as glass "
+            "reference</i>. This is the evaporation correction; it is kept for that liquid.</p>"
+            "<p><b>3. Separators</b>: record each sample (3 drops or more; both sides and both directions, MD and CD, if "
+            "they may differ). 640×480 at 120 fps for liquids that soak in within a second or two.</p>"
+            "<p><b>4. Read</b> the Soaking tab: the angle at fixed times after contact (set the times under "
+            "Measurement), the sorptivity (uptake per contact area, mm/√s) and when the drop was absorbed. "
+            "Untick drops that are not usable (dust, a drop dragged by the needle). Export the table for each sample.</p>"
+            "<p>The sorptivity is proportional to the scale: compare samples measured at the same scale.</p>"));
+    });
     help->addSeparator();
     help->addAction(tr("&About LibreDrop"), this, [this] {
         QMessageBox::about(this, tr("About LibreDrop"),
@@ -220,7 +233,23 @@ void MainWindow::buildUi() {
     soakTable_->header()->setStretchLastSection(false);
     tabs_ = new QTabWidget;
     tabs_->addTab(table_, tr("Shape"));
-    tabs_->addTab(soakTable_, tr("Soaking"));
+    soakHint_ = new QLabel;
+    soakHint_->setWordWrap(true);
+    soakHint_->setTextFormat(Qt::RichText);
+    glassRef_ = new QPushButton(tr("Use as glass reference"));
+    glassRef_->setObjectName(QStringLiteral("glassRef"));
+    glassRef_->setToolTip(tr("<p>Take the volume loss of the drops in this recording (a non-absorbing surface such as "
+                             "glass, same liquid) as the evaporation rate for this liquid.</p>"));
+    connect(glassRef_, &QPushButton::clicked, this, &MainWindow::useAsGlassReference);
+    auto* soakPage = new QWidget;
+    auto* sp = new QVBoxLayout(soakPage);
+    sp->setContentsMargins(4, 4, 4, 0);
+    auto* hr = new QHBoxLayout;
+    hr->addWidget(soakHint_, 1);
+    hr->addWidget(glassRef_, 0, Qt::AlignTop);
+    sp->addLayout(hr);
+    sp->addWidget(soakTable_, 1);
+    tabs_->addTab(soakPage, tr("Soaking"));
     tl->addWidget(tabs_, 1);
     auto* checksScroll = new QScrollArea;
     checksScroll->setWidget(checks_);
@@ -301,6 +330,7 @@ void MainWindow::buildUi() {
         saveSettings();
     });
     connect(evaporation_, &QDoubleSpinBox::editingFinished, this, [this] {
+        evaporationSource_ = evaporation_->value() > 0 ? tr("entered") : QString();
         updateTable();
         saveSettings();
     });
@@ -317,7 +347,7 @@ void MainWindow::buildUi() {
     scale_->setValue(st.value("scale", 94.23).toDouble());
     step_->setValue(st.value("step", 1).toInt());
     soakTimes_->setText(st.value("soakTimes", QStringLiteral("0.1, 1, 10")).toString());
-    evaporation_->setValue(st.value("evaporation", 0.0).toDouble());
+    loadEvaporation();
     sinceContact_->setChecked(st.value("sinceContact", false).toBool());
     statusBar()->showMessage(tr("Open a recording to start."));
 }
@@ -331,7 +361,70 @@ void MainWindow::liquidChanged() {
         density_->setValue(kLiquids[i].density);
         tension_->setValue(kLiquids[i].tension);
     }
+    loadEvaporation();   // evaporation is stored per liquid
     saveSettings();
+    if (haveResult_) updateTable();
+    else updateSoakHint();
+}
+
+void MainWindow::loadEvaporation() {
+    QSettings st;
+    const int i = liquid_->currentIndex();
+    evaporation_->setValue(st.value(QStringLiteral("evaporation/%1").arg(i), 0.0).toDouble());
+    evaporationSource_ = st.value(QStringLiteral("evaporationSource/%1").arg(i)).toString();
+}
+
+void MainWindow::updateSoakHint() {
+    const QString liquid = liquid_->currentText();
+    QString t;
+    if (evaporation_->value() <= 0) {
+        t = tr("<b>No evaporation correction for %1 yet.</b> Do this first: record a drop of the same liquid on a "
+               "non-absorbing surface (a clean glass slide), open and analyse it, then press <i>Use as glass "
+               "reference</i>. Or enter a known rate under Measurement ▸ Soaking. Until then the sorptivity includes "
+               "evaporation.").arg(liquid.toHtmlEscaped());
+    } else {
+        t = tr("Evaporation correction for %1: <b>%2 µL/s</b>%3. Change the liquid to use its own value.")
+                .arg(liquid.toHtmlEscaped()).arg(evaporation_->value(), 0, 'f', 4)
+                .arg(evaporationSource_.isEmpty() ? QString() : tr(" (%1)").arg(evaporationSource_.toHtmlEscaped()));
+    }
+    soakHint_->setText(t);
+    glassRef_->setEnabled(haveResult_ && !isImage_);
+}
+
+void MainWindow::useAsGlassReference() {
+    if (!haveResult_ || isImage_) return;
+    if (!(scale_->value() > 0)) {
+        QMessageBox::information(this, tr("Glass reference"), tr("Set the scale first: the evaporation rate is a volume per second."));
+        return;
+    }
+    const ld::SeriesSet set = ld::seriesOf(result_, resultUnits_);
+    const QList<int> chosen = chosenIds();
+    std::vector<double> rates;
+    bool absorbed = false;
+    for (const ld::DropSeries& d : set.drops) {
+        if (!chosen.contains(d.id)) continue;
+        const ld::TrackSummary s = ld::summarize(d);
+        if (std::isfinite(s.volumeRate)) rates.push_back(-s.volumeRate);
+        absorbed |= std::isfinite(ld::soak(d, soakOptions()).absorbedAfter);
+    }
+    if (rates.empty()) {
+        QMessageBox::information(this, tr("Glass reference"), tr("No drop in this recording has a measured volume after release."));
+        return;
+    }
+    std::sort(rates.begin(), rates.end());
+    const double e = rates[rates.size() / 2];
+    if (absorbed || e <= 0) {
+        QMessageBox::warning(this, tr("Glass reference"),
+                             absorbed ? tr("A drop disappeared during this recording: this does not look like a non-absorbing "
+                                           "surface. The value was not used.")
+                                      : tr("The drops did not lose volume (%1 µL/s). The value was not used.").arg(-e, 0, 'g', 3));
+        return;
+    }
+    evaporation_->setValue(e);
+    evaporationSource_ = tr("from %1").arg(QFileInfo(path_).fileName());
+    saveSettings();
+    updateTable();
+    statusBar()->showMessage(tr("Evaporation for %1 set to %2 µL/s.").arg(liquid_->currentText()).arg(e, 0, 'f', 4), 8000);
 }
 
 void MainWindow::saveSettings() const {
@@ -342,7 +435,8 @@ void MainWindow::saveSettings() const {
     st.setValue("scale", scale_->value());
     st.setValue("step", step_->value());
     st.setValue("soakTimes", soakTimes_->text());
-    st.setValue("evaporation", evaporation_->value());
+    st.setValue(QStringLiteral("evaporation/%1").arg(liquid_->currentIndex()), evaporation_->value());
+    st.setValue(QStringLiteral("evaporationSource/%1").arg(liquid_->currentIndex()), evaporationSource_);
     if (sinceContact_) st.setValue("sinceContact", sinceContact_->isChecked());
 }
 
@@ -568,6 +662,7 @@ void MainWindow::updateTable() {
         end->setToolTip(c0 + 5, tr("Volume change after release: %1 %2/s").arg(fmt(s.volumeRate, 4), V));
     }
     // soaking tab (videos only)
+    updateSoakHint();
     soakTable_->clear();
     tabs_->setTabVisible(1, !isImage_);
     if (!isImage_) {

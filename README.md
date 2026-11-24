@@ -31,7 +31,29 @@ yet.
   them; tick the drops that count; angle, base width and volume against time with a cursor (click the plot to
   jump there); export the table and the plot. Scale and liquid (water, DMC, DEC, PC or custom) are remembered.
 
-Planned: live camera and recording in the program, absorption models for separators, camera control, pendant-drop surface tension, surface free energy for non-absorbing samples.
+## Measuring separators (soaking)
+
+1. **Set up** (once per camera mode): the scale, and the liquid (Measurement ▸ Liquid).
+2. **Glass first** (once per liquid and day): record a drop of the same liquid on a clean glass slide, about as
+   long as the separator recordings. Open it, analyse, then Soaking tab ▸ **Use as glass reference**. This sets
+   the evaporation correction for that liquid (or enter a known rate under Measurement ▸ Soaking). The Soaking tab
+   says when it is missing.
+3. **Separators**: record each sample, 3 drops or more; both sides and both directions (MD/CD) if they may differ.
+   Use 640×480 at 120 fps when the liquid soaks in within a second or two.
+4. **Read** the Soaking tab: the angle at fixed times after contact (0.1, 1, 10 s by default; set under
+   Measurement), the **sorptivity** S (uptake per contact area: absorbed volume = S · area · √t, in mm/√s, fitted
+   after release with evaporation added back; R² shows how well the drop follows it) and when the drop was
+   absorbed. Untick drops that are not usable. On glass, S should come out ≈ 0.
+
+S is proportional to the image scale: compare samples measured at the same scale. Not yet tried on real
+separators.
+
+Command line: `LibreDropCLI video FILE --scale 94.23 --at 0.1,1,10 --evaporation 0.018` prints the same values;
+`LibreDropCLI pendant FILE --scale … --bottom ROW --from T0 --to T1` gives the surface tension from the hanging drop
+before contact (only reliable for large drops and a verified scale).
+
+Planned: live camera and recording in the program, camera control, surface tension in the program, surface free
+energy for non-absorbing samples.
 
 Install: Debian 13 / Ubuntu 24.04 `.deb`, Windows installer, macOS `.dmg` (Intel and Apple Silicon) from the
 releases page. The camera's recordings (Motion-JPEG) and LibreDrop's compact copies open directly; other video
