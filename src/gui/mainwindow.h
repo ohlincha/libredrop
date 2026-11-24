@@ -5,10 +5,12 @@
 #include <QMainWindow>
 #include <QSplitter>
 #include <QElapsedTimer>
+#include <QDateTime>
 #include <atomic>
 #include <memory>
 
 #include "core/project.h"
+#include "core/thermo.h"
 #include "core/report.h"
 #include "core/video.h"
 
@@ -68,6 +70,13 @@ private:
     QTreeWidget* soakTable_ = nullptr;
     class CompareDialog* compare_ = nullptr;
     class LibraryPanel* library_ = nullptr;
+    // room conditions from an attached USB thermometer (status bar; logged into the open project)
+    QLabel* conditions_ = nullptr;
+    QTimer* thermoTimer_ = nullptr;
+    QFutureWatcher<std::vector<ld::ThermoReading>> thermoWatcher_;
+    QDateTime lastConditionsLog_;
+    void readConditions();
+    void conditionsRead();
     class QDockWidget* libraryDock_ = nullptr;
     void newProject();
     void applyProjectContext();          // a project recording was opened: its liquid, evaporation, scale

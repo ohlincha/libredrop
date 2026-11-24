@@ -83,6 +83,17 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setAcceptDrops(true);
     buildUi();
     connect(&watcher_, &QFutureWatcher<ld::VideoResult>::finished, this, &MainWindow::analysisDone);
+    conditions_ = new QLabel;
+    conditions_->setVisible(false);
+    statusBar()->addPermanentWidget(conditions_);
+    thermoTimer_ = new QTimer(this);
+    thermoTimer_->setInterval(30000);
+    connect(thermoTimer_, &QTimer::timeout, this, &MainWindow::readConditions);
+    connect(&thermoWatcher_, &QFutureWatcher<std::vector<ld::ThermoReading>>::finished, this, &MainWindow::conditionsRead);
+    if (!qEnvironmentVariableIsSet("LIBREDROP_NO_THERMO")) {
+        thermoTimer_->start();
+        QTimer::singleShot(500, this, &MainWindow::readConditions);
+    }
     QSettings st;
     restoreGeometry(st.value("window/geometry").toByteArray());
     const QString last = st.value("project").toString();
@@ -473,8 +484,9 @@ ld::Recording* MainWindow::currentRecording() {
 }
 
 void MainWindow::applyProjectContext() {
-    const ld::Recording* rec = currentRecording();
+    ld::Recording* rec = currentRecording();
     if (!rec) return;
+    if (library_->project().fillConditions(*rec)) library_->save();
     const ld::Project& pr = library_->project();
     if (!rec->liquid.isEmpty()) {   // the liquid list entry with this name (or its abbreviation in brackets)
         for (int i = 0; i < liquid_->count(); ++i) {
@@ -496,6 +508,38 @@ void MainWindow::applyProjectContext() {
     evaporation_->setValue(std::isfinite(e.rate) ? e.rate : 0);
     evaporationSource_ = std::isfinite(e.rate) ? tr("project: %1 on %2").arg(QFileInfo(e.recording).fileName(), e.date) : QString();
     updateSoakHint();
+}
+
+void MainWindow::readConditions() {
+    if (!thermoWatcher_.isRunning()) thermoWatcher_.setFuture(QtConcurrent::run([] { return ld::readThermometers(); }));
+}
+
+void MainWindow::conditionsRead() {
+    const std::vector<ld::ThermoReading> all = thermoWatcher_.result();
+    if (all.empty()) {
+        conditions_->setVisible(false);
+        return;
+    }
+    const ld::ThermoReading room = ld::roomConditions(all);
+    QStringList tip;
+    for (const ld::ThermoReading& r : all)
+        tip << QStringLiteral("%1 (%2): %3").arg(r.name.isEmpty() ? r.model : r.name, r.location,
+                                                 r.error.isEmpty() ? QStringLiteral("%1 °C%2").arg(r.temperature, 0, 'f', 2)
+                                                                         .arg(std::isfinite(r.humidity) ? QStringLiteral(", %1 %RH").arg(r.humidity, 0, 'f', 1) : QString())
+                                                                   : r.error.toHtmlEscaped());
+    conditions_->setToolTip(tr("<p>Room conditions from USB thermometers (names and offsets from USB Thermo Logger). "
+                               "Logged into the open project every minute and noted with each recording.</p>") + tip.join(QStringLiteral("<br>")));
+    if (std::isfinite(room.temperature))
+        conditions_->setText(QStringLiteral("🌡 %1 °C%2 ").arg(room.temperature, 0, 'f', 1)
+                                 .arg(std::isfinite(room.humidity) ? QStringLiteral(" · %1 %RH").arg(room.humidity, 0, 'f', 0) : QString()));
+    else
+        conditions_->setText(tr("🌡 sensor: %1 ").arg(all.front().error.left(40)));
+    conditions_->setVisible(true);
+    if (library_->hasProject() && std::isfinite(room.temperature) &&
+        (!lastConditionsLog_.isValid() || lastConditionsLog_.secsTo(QDateTime::currentDateTime()) >= 55)) {
+        library_->project().logConditions(room.name.isEmpty() ? room.model : room.name, room.temperature, room.humidity);
+        lastConditionsLog_ = QDateTime::currentDateTime();
+    }
 }
 
 void MainWindow::liquidChanged() {
@@ -533,8 +577,25 @@ void MainWindow::updateSoakHint() {
                 .arg(liquid.toHtmlEscaped()).arg(evaporation_->value(), 0, 'f', 4)
                 .arg(evaporationSource_.isEmpty() ? QString() : tr(" (%1)").arg(evaporationSource_.toHtmlEscaped()));
     }
+    bool differ = false;
+    if (const ld::Recording* rec = currentRecording(); rec && evaporation_->value() > 0) {   // same conditions as the reference?
+        const ld::EvaporationRef e = library_->project().evaporationFor(rec->liquid, rec->date);
+        auto cond = [](double T, double H) {
+            return std::isfinite(T) ? QStringLiteral("%1 °C%2").arg(T, 0, 'f', 1)
+                                          .arg(std::isfinite(H) ? QStringLiteral(", %1 %RH").arg(H, 0, 'f', 0) : QString())
+                                    : tr("not recorded");
+        };
+        if (std::isfinite(rec->temperature) || std::isfinite(e.temperature)) {
+            differ = std::isfinite(rec->temperature) && std::isfinite(e.temperature) &&
+                     (std::abs(rec->temperature - e.temperature) > 2 ||
+                      (std::isfinite(rec->humidity) && std::isfinite(e.humidity) && std::abs(rec->humidity - e.humidity) > 10));
+            t += tr("<br>Conditions: this recording %1; glass reference %2.%3")
+                     .arg(cond(rec->temperature, rec->humidity), cond(e.temperature, e.humidity),
+                          differ ? tr(" <b>They differ: the evaporation correction may not fit; measure glass again.</b>") : QString());
+        }
+    }
     soakHint_->setText(t);
-    soakHint_->setProperty("state", evaporation_->value() <= 0 ? "todo" : "ok");
+    soakHint_->setProperty("state", evaporation_->value() <= 0 || differ ? "todo" : "ok");
     soakHint_->style()->unpolish(soakHint_);   // (re-apply the style sheet for the new state)
     soakHint_->style()->polish(soakHint_);
     glassRef_->setEnabled(haveResult_ && !isImage_);
@@ -578,7 +639,7 @@ void MainWindow::useAsGlassReference() {
         pr.evaporation.erase(std::remove_if(pr.evaporation.begin(), pr.evaporation.end(), [&](const ld::EvaporationRef& x) {
             return x.liquid.compare(liquid, Qt::CaseInsensitive) == 0 && x.date == rec->date;
         }), pr.evaporation.end());
-        pr.evaporation.push_back({liquid, rec->date, e, rec->file});
+        pr.evaporation.push_back({liquid, rec->date, e, rec->file, rec->temperature, rec->humidity});
         library_->save();
         evaporationSource_ = tr("project: %1 on %2").arg(QFileInfo(rec->file).fileName(), rec->date);
     }

@@ -28,6 +28,8 @@ struct Recording {
     QString notes;
     QList<int> excluded;                            // drop ids not to use
     bool glassReference = false;                    // used for the evaporation of its liquid that day
+    QString started;                                // ISO date and time the recording began (capture .json / file)
+    double temperature = kNaN, humidity = kNaN;     // room conditions then (°C, %RH), from conditions.csv
 };
 
 struct LiquidData {
@@ -44,6 +46,7 @@ struct EvaporationRef {
     QString liquid, date;                           // date: yyyy-MM-dd
     double rate = kNaN;                             // µL/s (positive: loss)
     QString recording;                              // the glass recording it came from (or "entered")
+    double temperature = kNaN, humidity = kNaN;     // conditions during that recording
 };
 
 struct Calibration {
@@ -81,6 +84,13 @@ struct Project {
     // Adds a recording (copied into recordings/ if it is outside the project), with sample, liquid, date and
     // volume from the capture tool's .json next to it when there is one; the sample is created if new.
     bool addRecording(const QString& path, bool copy, Recording* added, QString* error);
+
+    // Room conditions, logged while LibreDrop runs with the project open (conditions.csv: time, sensor, °C, %RH).
+    void logConditions(const QString& sensor, double temperature, double humidity) const;
+    // The logged reading nearest to an ISO time, within 15 minutes; false if none.
+    bool conditionsAt(const QString& isoTime, double* temperature, double* humidity) const;
+    // Fills in a recording's conditions from the log if it has none yet; true if it changed.
+    bool fillConditions(Recording& r) const;
 };
 
 // Reads the capture tool's <video>.json: sample fields, date. False if there is none.

@@ -44,6 +44,9 @@ QJsonObject toJson(const Recording& r) {
         o[QStringLiteral("excluded")] = a;
     }
     if (r.glassReference) o[QStringLiteral("glass_reference")] = true;
+    if (!r.started.isEmpty()) o[QStringLiteral("started")] = r.started;
+    if (std::isfinite(r.temperature)) o[QStringLiteral("temperature_c")] = r.temperature;
+    if (std::isfinite(r.humidity)) o[QStringLiteral("humidity_pct")] = r.humidity;
     return o;
 }
 Recording recordingOf(const QJsonObject& o) {
@@ -53,6 +56,8 @@ Recording recordingOf(const QJsonObject& o) {
     r.volumeUl = num(o[QStringLiteral("volume_ul")]), r.notes = o[QStringLiteral("notes")].toString();
     for (const QJsonValue& v : o[QStringLiteral("excluded")].toArray()) r.excluded << v.toInt();
     r.glassReference = o[QStringLiteral("glass_reference")].toBool();
+    r.started = o[QStringLiteral("started")].toString();
+    r.temperature = num(o[QStringLiteral("temperature_c")]), r.humidity = num(o[QStringLiteral("humidity_pct")]);
     return r;
 }
 QJsonObject toJson(const LiquidData& l) {
@@ -125,7 +130,8 @@ bool Project::load(const QString& dir, Project* out, QString* error) {
     for (const QJsonValue& v : o[QStringLiteral("evaporation")].toArray()) {
         const QJsonObject e = v.toObject();
         p.evaporation.push_back({e[QStringLiteral("liquid")].toString(), e[QStringLiteral("date")].toString(),
-                                 num(e[QStringLiteral("rate_ul_s")]), e[QStringLiteral("recording")].toString()});
+                                 num(e[QStringLiteral("rate_ul_s")]), e[QStringLiteral("recording")].toString(),
+                                 num(e[QStringLiteral("temperature_c")]), num(e[QStringLiteral("humidity_pct")])});
     }
     for (const QJsonValue& v : o[QStringLiteral("calibrations")].toArray()) {
         const QJsonObject c = v.toObject();
@@ -143,7 +149,8 @@ bool Project::save(QString* error) const {
     for (const Recording& x : recordings) r.append(toJson(x));
     for (const LiquidData& x : liquids) l.append(toJson(x));
     for (const EvaporationRef& x : evaporation)
-        e.append(QJsonObject{{"liquid", x.liquid}, {"date", x.date}, {"rate_ul_s", num(x.rate)}, {"recording", x.recording}});
+        e.append(QJsonObject{{"liquid", x.liquid}, {"date", x.date}, {"rate_ul_s", num(x.rate)}, {"recording", x.recording},
+                             {"temperature_c", num(x.temperature)}, {"humidity_pct", num(x.humidity)}});
     for (const Calibration& x : calibrations)
         c.append(QJsonObject{{"frame_width", x.frameWidth}, {"px_per_mm", num(x.pxPerMm)}, {"needle_mm", num(x.needleMm)},
                              {"date", x.date}, {"method", x.method}});
@@ -200,6 +207,7 @@ bool readCaptureJson(const QString& video, Recording* r, Sample* s) {
     if (o.isEmpty()) return false;
     const QString started = o[QStringLiteral("started")].toString();
     if (started.size() >= 10) r->date = started.left(10);
+    if (started.size() >= 19) r->started = started.left(19);
     const QJsonObject m = o[QStringLiteral("sample")].toObject();
     s->name = m[QStringLiteral("sample")].toString();
     s->batch = m[QStringLiteral("batch")].toString();
@@ -249,13 +257,57 @@ bool Project::addRecording(const QString& path, bool copy, Recording* added, QSt
     Recording r;
     r.file = relative(file);
     Sample s;
-    if (!readCaptureJson(file, &r, &s) || r.date.isEmpty()) r.date = fi.lastModified().toString(QStringLiteral("yyyy-MM-dd"));
+    if (!readCaptureJson(file, &r, &s) || r.date.isEmpty()) r.date = QFileInfo(file).lastModified().toString(QStringLiteral("yyyy-MM-dd"));
+    if (r.started.isEmpty()) r.started = QFileInfo(file).lastModified().toString(Qt::ISODate).left(19);   // (the end, roughly)
+    fillConditions(r);
     if (!r.sample.isEmpty() && !sample(r.sample)) {
         s.name = r.sample;
         samples.push_back(s);
     }
     recordings.push_back(r);
     if (added) *added = r;
+    return true;
+}
+
+void Project::logConditions(const QString& sensor, double t, double h) const {
+    QFile f(QDir(dir).filePath(QStringLiteral("conditions.csv")));
+    const bool fresh = !f.exists();
+    if (!f.open(QIODevice::Append | QIODevice::Text)) return;
+    if (fresh) f.write("time,sensor,temperature_c,humidity_pct\n");
+    f.write(QStringLiteral("%1,%2,%3,%4\n")
+                .arg(QDateTime::currentDateTime().toString(Qt::ISODate).left(19), QString(sensor).replace(QLatin1Char(','), QLatin1Char(' ')),
+                     std::isfinite(t) ? QString::number(t, 'f', 2) : QString(), std::isfinite(h) ? QString::number(h, 'f', 1) : QString())
+                .toUtf8());
+}
+
+bool Project::conditionsAt(const QString& iso, double* t, double* h) const {
+    const QDateTime at = QDateTime::fromString(iso.left(19), Qt::ISODate);
+    QFile f(QDir(dir).filePath(QStringLiteral("conditions.csv")));
+    if (!at.isValid() || !f.open(QIODevice::ReadOnly | QIODevice::Text)) return false;
+    qint64 best = 15 * 60 + 1;
+    bool found = false;
+    while (!f.atEnd()) {
+        const QList<QByteArray> c = f.readLine().trimmed().split(',');
+        if (c.size() < 4) continue;
+        const QDateTime when = QDateTime::fromString(QString::fromUtf8(c[0]), Qt::ISODate);
+        if (!when.isValid()) continue;
+        const qint64 d = std::abs(when.secsTo(at));
+        if (d < best) {
+            bool okT = false, okH = false;
+            const double tv = c[2].toDouble(&okT), hv = c[3].toDouble(&okH);
+            if (!okT) continue;
+            best = d, found = true;
+            *t = tv, *h = okH ? hv : kNaN;
+        }
+    }
+    return found;
+}
+
+bool Project::fillConditions(Recording& r) const {
+    if (std::isfinite(r.temperature) || r.started.isEmpty()) return false;
+    double t, h;
+    if (!conditionsAt(r.started, &t, &h)) return false;
+    r.temperature = t, r.humidity = h;
     return true;
 }
 

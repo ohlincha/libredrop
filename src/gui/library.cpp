@@ -129,8 +129,12 @@ void LibraryPanel::refresh() {
             it->setText(2, r.date);
             it->setData(0, Qt::UserRole, RecordingItem);
             it->setData(0, Qt::UserRole + 1, r.file);
-            it->setToolTip(0, QStringLiteral("%1%2").arg(r.file.toHtmlEscaped(),
-                                                         r.notes.isEmpty() ? QString() : QStringLiteral("<br>") + r.notes.toHtmlEscaped()));
+            QString tip = r.file.toHtmlEscaped();
+            if (std::isfinite(r.temperature))
+                tip += QStringLiteral("<br>%1 °C%2").arg(r.temperature, 0, 'f', 1)
+                           .arg(std::isfinite(r.humidity) ? QStringLiteral(", %1 %RH").arg(r.humidity, 0, 'f', 0) : QString());
+            if (!r.notes.isEmpty()) tip += QStringLiteral("<br>") + r.notes.toHtmlEscaped();
+            it->setToolTip(0, tip);
             ++count;
         }
         top->setText(1, tr("%n recording(s)", nullptr, count));

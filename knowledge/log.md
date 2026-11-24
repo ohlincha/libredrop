@@ -10,3 +10,4 @@
 - 2026-11-24: v0.1.1 released (soaking tab with glass-reference guide, play, table/zoom fixes).
 - 2026-11-24: Compare samples window (several recordings, sample names from file names, mean ± SD per sample, CSV); subtle colour.
 - 2026-11-24: project library (Project menu, Library dock: samples/recordings from capture .json, control ★, glass reference ◆ stored per liquid and date, results cached in results/, unticked drops saved; Compare from the library with per-recording liquid, scale and evaporation). Capture script got sample fields (ossila/, not versioned).
+- 2026-11-24: USB thermometers read directly (core/thermo: hidraw / hid.dll / IOKit, USB Thermo Logger's offsets); status bar; conditions.csv in the project; recordings and glass references get °C/%RH; warning when they differ (>2 °C or >10 %RH). No sensor attached anywhere yet: untested on hardware.

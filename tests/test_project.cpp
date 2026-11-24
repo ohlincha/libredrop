@@ -1,6 +1,7 @@
 // Project folder: create, add recordings (with and without the capture .json), save and load, look-ups.
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QTemporaryDir>
 #include <QtTest>
 
@@ -56,6 +57,29 @@ private slots:
         QVERIFY(!std::isfinite(q.evaporationFor(QStringLiteral("DMC"), QStringLiteral("2026-11-01")).rate));
         QCOMPARE(q.calibrationFor(1920).pxPerMm, 94.23);
         QVERIFY(!std::isfinite(q.calibrationFor(640).pxPerMm));
+    }
+    void conditions() {
+        QTemporaryDir tmp;
+        Project p;
+        QString err;
+        QVERIFY(Project::create(tmp.filePath(QStringLiteral("c")), {}, &p, &err));
+        QFile f(p.dir + QStringLiteral("/conditions.csv"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("time,sensor,temperature_c,humidity_pct\n2026-11-25T10:00:00,TEMPerHUM,22.50,35.0\n"
+                "2026-11-25T10:10:00,TEMPerHUM,23.10,33.0\n2026-11-25T11:00:00,TEMPerHUM,24.00,30.0\n");
+        f.close();
+        double t, h;
+        QVERIFY(p.conditionsAt(QStringLiteral("2026-11-25T10:08:00"), &t, &h));
+        QCOMPARE(t, 23.1);
+        QCOMPARE(h, 33.0);
+        QVERIFY(!p.conditionsAt(QStringLiteral("2026-11-25T10:35:00"), &t, &h));   // nothing within 15 min
+        Recording r;
+        r.started = QStringLiteral("2026-11-25T10:58:30");
+        QVERIFY(p.fillConditions(r));
+        QCOMPARE(r.temperature, 24.0);
+        const qint64 before = QFileInfo(p.dir + QStringLiteral("/conditions.csv")).size();
+        p.logConditions(QStringLiteral("x"), 20.0, kNaN);   // appends
+        QVERIFY(QFileInfo(p.dir + QStringLiteral("/conditions.csv")).size() > before);
     }
 };
 
