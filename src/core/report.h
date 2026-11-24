@@ -37,7 +37,8 @@ struct DropSeries {
     int id = 0;
     double x = kNaN;                    // base centre at the first frame (output length unit)
     std::vector<double> t;              // s since the start of the video
-    std::vector<double> angle, base, volume;   // NaN where not usable
+    std::vector<double> angle, base, volume;   // NaN where not usable (angle: Young–Laplace, see angleOf)
+    std::vector<double> left, right, height;   // tangent angles at the two contact points; drop height
     std::vector<char> needle;           // needle still in the drop
     double tContact() const { return t.empty() ? 0 : t.front(); }
     int released() const;               // first index after the needle has left the drop, or -1
@@ -59,6 +60,9 @@ struct TrackSummary {
     double angleRelease = kNaN, angleEnd = kNaN;     // median over a few frames
     double baseRelease = kNaN, baseEnd = kNaN;
     double volumeRelease = kNaN, volumeEnd = kNaN;
+    double leftRelease = kNaN, leftEnd = kNaN, rightRelease = kNaN, rightEnd = kNaN;
+    double heightRelease = kNaN, heightEnd = kNaN;
+    double baseMax = kNaN;                                 // after release (end of spreading)
     double angleRate = kNaN, baseRate = kNaN, volumeRate = kNaN;   // per second, line fit after release
     int points = 0, failed = 0;
 };

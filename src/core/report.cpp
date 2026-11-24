@@ -105,6 +105,10 @@ SeriesSet seriesOf(const VideoResult& r, const Units& u) {
             d.angle.push_back(angleOf(a));
             d.base.push_back(ok ? u.len(a.baseWidthPx) : kNaN);
             d.volume.push_back(ok && a.volumePx3 > 0 ? u.vol(a.volumePx3) : kNaN);
+            const AngleResult* tg = a.method(QStringLiteral("tangent"));
+            d.left.push_back(ok && tg && tg->ok ? tg->left : kNaN);
+            d.right.push_back(ok && tg && tg->ok ? tg->right : kNaN);
+            d.height.push_back(ok ? u.len(a.heightPx) : kNaN);
             d.needle.push_back(p.drop.onNeedle);
         }
         s.drops.push_back(std::move(d));
@@ -133,6 +137,8 @@ bool readTracksCsv(const QString& text, SeriesSet* out, QString* error) {
     SeriesSet s;
     s.lenUnit = head[cBase].section(QLatin1Char('_'), 1);
     s.volUnit = head[cVol].section(QLatin1Char('_'), 1);
+    const int cLeft = col("tangent_left"), cRight = col("tangent_right"),
+              cHeight = int(head.indexOf(QStringLiteral("height_") + s.lenUnit));   // (not height_width)
     auto val = [](const QStringList& f, int i) {
         bool ok = false;
         const double v = i >= 0 && i < f.size() ? f[i].toDouble(&ok) : kNaN;
@@ -154,6 +160,9 @@ bool readTracksCsv(const QString& text, SeriesSet* out, QString* error) {
         it->angle.push_back(ok ? val(f, cAngle) : kNaN);
         it->base.push_back(ok ? val(f, cBase) : kNaN);
         it->volume.push_back(ok ? val(f, cVol) : kNaN);
+        it->left.push_back(ok ? val(f, cLeft) : kNaN);
+        it->right.push_back(ok ? val(f, cRight) : kNaN);
+        it->height.push_back(ok ? val(f, cHeight) : kNaN);
         it->needle.push_back(f[cNeedle] == QLatin1String("1"));
     }
     *out = std::move(s);
@@ -179,7 +188,8 @@ TrackSummary summarize(const DropSeries& d) {
     if (rel < 0) return s;
     s.tRelease = d.t[std::size_t(rel)];
     auto from = [&](const std::vector<double>& v) { return std::vector<double>(v.begin() + rel, v.end()); };
-    const std::vector<double> tt = from(d.t), ang = from(d.angle), base = from(d.base), vol = from(d.volume);
+    const std::vector<double> tt = from(d.t), ang = from(d.angle), base = from(d.base), vol = from(d.volume),
+                              lft = from(d.left), rgt = from(d.right), hgt = from(d.height);
     // first and last few usable values
     auto edge = [](const std::vector<double>& v, bool first) {
         std::vector<double> got;
@@ -192,6 +202,15 @@ TrackSummary summarize(const DropSeries& d) {
     s.angleRelease = edge(ang, true), s.angleEnd = edge(ang, false);
     s.baseRelease = edge(base, true), s.baseEnd = edge(base, false);
     s.volumeRelease = edge(vol, true), s.volumeEnd = edge(vol, false);
+    s.leftRelease = edge(lft, true), s.leftEnd = edge(lft, false);
+    s.rightRelease = edge(rgt, true), s.rightEnd = edge(rgt, false);
+    s.heightRelease = edge(hgt, true), s.heightEnd = edge(hgt, false);
+    for (std::size_t i = 0; i + 4 < base.size(); ++i) {   // maximum of the 5-frame running median (one-frame outliers don't count)
+        std::vector<double> w;
+        for (std::size_t j = i; j < i + 5; ++j)
+            if (std::isfinite(base[j])) w.push_back(base[j]);
+        if (w.size() >= 3 && !(median(w) <= s.baseMax)) s.baseMax = median(w);
+    }
     s.angleRate = slope(tt, ang), s.baseRate = slope(tt, base), s.volumeRate = slope(tt, vol);
     return s;
 }
@@ -202,19 +221,32 @@ QColor dropColor(int id) {
     return colors[std::size_t(std::max(0, id - 1)) % 8];
 }
 
+// Value of one series at time t (s since the video's start): the nearest frame, if it is within 1.5 frame steps.
+static double valueAt(const DropSeries& d, const std::vector<double>& v, double t) {
+    if (d.t.size() < 2) return kNaN;
+    const auto it = std::lower_bound(d.t.begin(), d.t.end(), t);
+    std::size_t i = std::size_t(it - d.t.begin());
+    if (i == d.t.size() || (i > 0 && t - d.t[i - 1] < d.t[i] - t)) --i;
+    const std::size_t j = i + 1 < d.t.size() ? i + 1 : i - 1;
+    const double step = std::abs(d.t[j] - d.t[i]);
+    return std::abs(d.t[i] - t) <= 1.5 * step + 1e-9 ? v[i] : kNaN;
+}
+
 PlotGeometry drawSeries(QPainter& p, const QRect& area, const SeriesSet& r, const PlotStyle& st) {
     PlotGeometry g;
     p.save();
     p.setRenderHint(QPainter::Antialiasing);
     p.fillRect(area, st.background);
+    const QString volUnit = r.volUnit == QLatin1String("uL") ? QStringLiteral("µL") : r.volUnit;
     struct Panel {
         QString title;
         std::vector<double> DropSeries::*v;
+        QString unit;
     };
     const Panel panels[] = {
-        {QStringLiteral("contact angle (°)"), &DropSeries::angle},
-        {QStringLiteral("base width (%1)").arg(r.lenUnit), &DropSeries::base},
-        {QStringLiteral("volume (%1)").arg(r.volUnit == QLatin1String("uL") ? QStringLiteral("µL") : r.volUnit), &DropSeries::volume},
+        {QStringLiteral("contact angle (°)"), &DropSeries::angle, QStringLiteral("°")},
+        {QStringLiteral("base width (%1)").arg(r.lenUnit), &DropSeries::base, QLatin1Char(' ') + r.lenUnit},
+        {QStringLiteral("volume (%1)").arg(volUnit), &DropSeries::volume, QLatin1Char(' ') + volUnit},
     };
     auto t0Of = [&](const DropSeries& d) { return st.sinceContact ? d.tContact() : 0.0; };
     double tMin = 1e300, tMax = -1e300;
@@ -301,11 +333,31 @@ PlotGeometry drawSeries(QPainter& p, const QRect& area, const SeriesSet& r, cons
             p.drawLine(QPointF(X(st.cursor), box.top()), QPointF(X(st.cursor), box.bottom()));
         }
         p.setClipping(false);
-        if (std::isfinite(st.cursor) && k == 0) {   // the shown frame's time: right end of the title row (if it fits)
-            const QString label = QStringLiteral("- - frame at %1 s").arg(st.cursor, 0, 'f', 2);
-            if (p.fontMetrics().horizontalAdvance(panels[k].title) + p.fontMetrics().horizontalAdvance(label) + 20 < box.width()) {
-                p.setPen(st.text);
-                p.drawText(QRect(box.left(), box.top() - lh, box.width(), lh - 2), Qt::AlignRight | Qt::AlignVCenter, label);
+        if (std::isfinite(st.cursor)) {   // each drop's value at the cursor, in its colour, right of the title (as many as fit)
+            struct Piece { QString text; QColor color; };
+            std::vector<Piece> pieces;
+            for (const DropSeries& t : r.drops) {
+                if (st.highlight >= 0 && t.id != st.highlight && r.drops.size() > 1) continue;
+                const double v = valueAt(t, t.*panels[k].v, st.cursor + t0Of(t));
+                if (!std::isfinite(v)) continue;
+                const QString num = (k == 0 ? QString::number(v, 'f', 1) : QString::number(v, 'g', 3)) + panels[k].unit;
+                pieces.push_back({QStringLiteral("%1: %2").arg(t.id).arg(num), dropColor(t.id)});
+            }
+            if (k == 0 && st.legend) pieces.insert(pieces.begin(), {QStringLiteral("at %1 s").arg(st.cursor, 0, 'f', 2), st.text});
+            const QFontMetrics fm = p.fontMetrics();
+            const int space = box.width() - fm.horizontalAdvance(panels[k].title) - 24, sep = fm.horizontalAdvance(QStringLiteral("   "));
+            int w = 0;
+            std::size_t n = 0;
+            for (; n < pieces.size(); ++n) {
+                const int add = fm.horizontalAdvance(pieces[n].text) + (n ? sep : 0);
+                if (w + add > space) break;
+                w += add;
+            }
+            int x = box.right() - w;
+            for (std::size_t i = 0; i < n; ++i) {
+                p.setPen(pieces[i].color);
+                p.drawText(QRect(x, box.top() - lh, w, lh - 2), Qt::AlignLeft | Qt::AlignVCenter, pieces[i].text);
+                x += fm.horizontalAdvance(pieces[i].text) + sep;
             }
         }
     }

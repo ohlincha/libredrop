@@ -2,7 +2,9 @@
 #include <QApplication>
 #include <QIcon>
 #include <QTimer>
+#include <QWheelEvent>
 
+#include "frameview.h"
 #include "mainwindow.h"
 #include "splash.h"
 
@@ -31,6 +33,22 @@ int main(int argc, char** argv) {
     const QString shot = qEnvironmentVariable("LIBREDROP_SHOT");
     if (!shot.isEmpty()) {
         const int ms = int(1000 * shot.section(QLatin1Char(','), 1).toDouble());
+        // LIBREDROP_SHOT_WHEEL=notches[,xfrac,yfrac]: mouse-wheel steps over the frame view just before (+ zooms in)
+        const QString wheel = qEnvironmentVariable("LIBREDROP_SHOT_WHEEL");
+        if (!wheel.isEmpty())
+            QTimer::singleShot(std::max(0, (ms > 0 ? ms : 3000) - 300), &w, [&w, wheel] {
+                if (FrameView* v = w.findChild<FrameView*>()) {
+                    const int n = wheel.section(QLatin1Char(','), 0, 0).toInt();
+                    const double fx = wheel.section(QLatin1Char(','), 1, 1).isEmpty() ? 0.5 : wheel.section(QLatin1Char(','), 1, 1).toDouble();
+                    const double fy = wheel.section(QLatin1Char(','), 2, 2).isEmpty() ? 0.5 : wheel.section(QLatin1Char(','), 2, 2).toDouble();
+                    const QPointF at(v->width() * fx, v->height() * fy);
+                    for (int i = 0; i < std::abs(n); ++i) {
+                        QWheelEvent e(at, v->mapToGlobal(at), {}, {0, n > 0 ? 120 : -120}, Qt::NoButton, Qt::NoModifier,
+                                      Qt::NoScrollPhase, false);
+                        QCoreApplication::sendEvent(v, &e);
+                    }
+                }
+            });
         QTimer::singleShot(ms > 0 ? ms : 3000, &w, [&w, shot] {
             w.grab().save(shot.section(QLatin1Char(','), 0, 0));
             w.close();

@@ -40,6 +40,7 @@ private:
     QRectF dropsRect(int onlyId = 0) const;  // image region around the drops (all, or one id)
     void fit(const QRectF& r);               // view = r widened to the widget's aspect ratio
     void updateAutoView();
+    void clampView();                        // zoom between 16x and the whole frame; the image stays in view
     double scale() const;
     QPointF toWidget(double x, double y) const;
     QPointF toImage(const QPointF& w) const;

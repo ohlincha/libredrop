@@ -3,6 +3,7 @@
 // found in it, choose the drops that count, and see their angle, base width and volume over time.
 #include <QFutureWatcher>
 #include <QMainWindow>
+#include <QSplitter>
 #include <atomic>
 #include <memory>
 
@@ -62,6 +63,8 @@ private:
     QSlider* slider_ = nullptr;
     QLabel* timeLabel_ = nullptr;
     QTreeWidget* table_ = nullptr;
+    QSplitter* split_ = nullptr;   // frame | side panel
+    void fitTableWidth();                 // widen the side panel so every table column shows
     QLabel* checks_ = nullptr;
     QWidget* plotBox_ = nullptr;
     QDoubleSpinBox* scale_ = nullptr;

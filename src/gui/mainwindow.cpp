@@ -88,8 +88,8 @@ void MainWindow::buildUi() {
     file->addAction(tr("Export &plot (PNG)…"), this, &MainWindow::exportPlot);
     expTable->setShortcut(QKeySequence::Save);
     file->addAction(tr("Save &compact copy…"), this, &MainWindow::saveCompact)
-        ->setToolTip(tr("Copy of the recording with only the band around the drops, in grey, as JPEG frames: typically "
-                        "5–15× smaller, opens without ffmpeg, gives the same results."));
+        ->setToolTip(tr("<p>Copy of the recording with only the band around the drops, in grey, as JPEG frames: typically "
+                        "5–15× smaller, opens without ffmpeg, gives the same results.</p>"));
     file->addSeparator();
     file->addAction(tr("&Quit"), QKeySequence::Quit, this, &QWidget::close);
     QMenu* help = menuBar()->addMenu(tr("&Help"));
@@ -162,9 +162,8 @@ void MainWindow::buildUi() {
 
     table_ = new QTreeWidget;
     table_->setRootIsDecorated(false);
-    table_->setHeaderLabels({tr("Drop"), tr("Touched"), tr("Angle"), tr("Base"), tr("Volume"), tr("Frames")});
-    table_->setToolTip(tr("Tick the drops that count: only those are plotted and exported. "
-                          "Values: at release from the needle → at the end."));
+    table_->setHeaderLabels({tr("Drop")});
+    table_->setToolTip(tr("<p>Tick the drops that count: only those are plotted and exported.</p>"));
     table_->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
     table_->header()->setStretchLastSection(false);
     table_->setMinimumHeight(110);
@@ -206,6 +205,7 @@ void MainWindow::buildUi() {
     split->addWidget(right);
     split->setStretchFactor(0, 3);
     split->setStretchFactor(1, 2);
+    split_ = split;
     setCentralWidget(split);
     resize(1500, 900);
 
@@ -231,7 +231,10 @@ void MainWindow::buildUi() {
     });
     connect(view_, &FrameView::dropClicked, this, [this](int id) {
         for (int i = 0; i < table_->topLevelItemCount(); ++i)
-            if (table_->topLevelItem(i)->data(0, Qt::UserRole).toInt() == id) table_->setCurrentItem(table_->topLevelItem(i));
+            if (table_->topLevelItem(i)->data(0, Qt::UserRole).toInt() == id) {
+                table_->setCurrentItem(table_->topLevelItem(i));
+                break;
+            }
     });
     connect(plot_, &PlotWidget::timeClicked, this, [this](double t) { slider_->setValue(frameAt(t)); });
     connect(sinceContact_, &QCheckBox::toggled, plot_, &PlotWidget::setSinceContact);
@@ -340,8 +343,6 @@ void MainWindow::openFile(const QString& path) {
     slider_->setEnabled(!isImage_);
     slider_->setVisible(!isImage_);
     plotBox_->setVisible(!isImage_);
-    table_->setHeaderLabels(isImage_ ? QStringList{tr("Drop"), tr("Left"), tr("Right"), tr("Base"), tr("Height"), tr("Volume")}
-                                     : QStringList{tr("Drop"), tr("Touched"), tr("Angle"), tr("Base"), tr("Volume"), tr("Frames")});
     timeLabel_->setVisible(!isImage_);
     timeLabel_->setText(tr("%1 s  (frame %2)").arg(0.0, 0, 'f', 2).arg(0));
     analyseButton_->setEnabled(true);
@@ -437,6 +438,20 @@ void MainWindow::updateTable() {
     table_->clear();
     const ld::SeriesSet set = ld::seriesOf(result_, resultUnits_);
     const QString L = set.lenUnit, V = set.volUnit == QLatin1String("uL") ? QStringLiteral("µL") : set.volUnit;
+    // Same columns for an image and a video. A video has two lines per drop (at release from the needle; at the end)
+    // plus contact time and frame count; units in the header, numbers in the cells.
+    QStringList head{tr("Drop")};
+    if (!isImage_) head << tr("Contact (s)") << QString();
+    head << tr("Angle (°)") << tr("Left (°)") << tr("Right (°)") << tr("Base (%1)").arg(L) << tr("Height (%1)").arg(L)
+         << tr("Volume (%1)").arg(V);
+    if (!isImage_) head << tr("Frames");
+    table_->setColumnCount(int(head.size()));
+    table_->setHeaderLabels(head);
+    const int c0 = isImage_ ? 1 : 3;   // first value column
+    table_->headerItem()->setToolTip(c0, tr("Young–Laplace fit of the whole outline: the contact angle to use"));
+    table_->headerItem()->setToolTip(c0 + 1, tr("Tangent at the left contact point (a check: should be close to Angle)"));
+    table_->headerItem()->setToolTip(c0 + 2, tr("Tangent at the right contact point"));
+    if (!isImage_) table_->headerItem()->setToolTip(1, tr("Time the drop touched the surface"));
     for (const ld::DropSeries& d : set.drops) {
         const ld::TrackSummary s = ld::summarize(d);
         auto* it = new QTreeWidgetItem(table_);
@@ -446,37 +461,55 @@ void MainWindow::updateTable() {
         QPixmap swatch(12, 12);
         swatch.fill(ld::dropColor(d.id));
         it->setIcon(0, QIcon(swatch));
-        if (isImage_) {   // one frame: left/right angle (Young–Laplace is symmetric: tangent sides), base, height, volume
-            const ld::DropTrack& tr0 = *std::find_if(result_.tracks.begin(), result_.tracks.end(),
-                                                      [&](const ld::DropTrack& t) { return t.id == d.id; });
-            const ld::DropAnalysis& a = tr0.points.front().drop.a;
-            const ld::AngleResult* m = a.method(QStringLiteral("tangent"));
-            const bool ok = ld::usable(a);
-            it->setText(1, ok && m && m->ok ? tr("%1°").arg(m->left, 0, 'f', 1) : tr("—"));
-            it->setText(2, ok && m && m->ok ? tr("%1°").arg(m->right, 0, 'f', 1) : tr("—"));
-            it->setText(3, tr("%1 %2").arg(fmt(d.base[0], 3), L));
-            it->setText(4, tr("%1 %2").arg(fmt(ok ? resultUnits_.len(a.heightPx) : ld::kNaN, 3), L));
-            it->setText(5, tr("%1 %2").arg(fmt(d.volume[0], 3), V));
-            it->setToolTip(1, tr("Tangent method, left and right; Young–Laplace (symmetric): %1°").arg(fmt(d.angle[0], 1)));
+        auto put = [&](QTreeWidgetItem* row, double ang, double l, double r, double b, double h, double v) {
+            row->setText(c0, fmt(ang, 1));
+            row->setText(c0 + 1, fmt(l, 1));
+            row->setText(c0 + 2, fmt(r, 1));
+            row->setText(c0 + 3, fmt(b, 3));
+            row->setText(c0 + 4, fmt(h, 3));
+            row->setText(c0 + 5, fmt(v, 3));
+        };
+        if (isImage_) {
+            put(it, d.angle[0], d.left[0], d.right[0], d.base[0], d.height[0], d.volume[0]);
             continue;
         }
-        it->setText(1, tr("%1 s").arg(s.tContact, 0, 'f', 2));
-        it->setText(2, tr("%1 → %2°").arg(fmt(s.angleRelease, 1), fmt(s.angleEnd, 1)));
-        it->setText(3, tr("%1 → %2 %3").arg(fmt(s.baseRelease, 2), fmt(s.baseEnd, 2), L));
-        it->setText(4, tr("%1 → %2 %3").arg(fmt(s.volumeRelease, 2), fmt(s.volumeEnd, 2), V));
-        it->setText(5, s.failed ? tr("%1 (%2 not measured)").arg(s.points).arg(s.failed) : QString::number(s.points));
-        it->setToolTip(2, tr("Angle change after release: %1°/s").arg(fmt(s.angleRate, 3)));
-        it->setToolTip(4, tr("Volume change after release: %1 %2/s").arg(fmt(s.volumeRate, 4), V));
-        if (s.tRelease < 0) it->setToolTip(1, tr("The needle stays in this drop"));
-        else it->setToolTip(1, tr("Free of the needle from %1 s").arg(s.tRelease, 0, 'f', 2));
+        it->setText(1, QString::number(s.tContact, 'f', 2));
+        it->setText(9, s.failed ? tr("%1 (%2 not measured)").arg(s.points).arg(s.failed) : QString::number(s.points));
+        if (s.tRelease < 0) {
+            it->setText(2, tr("on needle"));
+            it->setToolTip(2, tr("The needle stays in this drop: no values after release"));
+            continue;
+        }
+        it->setText(2, tr("release"));
+        it->setToolTip(2, tr("Free of the needle from %1 s (median of the first 5 frames after)").arg(s.tRelease, 0, 'f', 2));
+        put(it, s.angleRelease, s.leftRelease, s.rightRelease, s.baseRelease, s.heightRelease, s.volumeRelease);
+        auto* end = new QTreeWidgetItem(table_);
+        end->setData(0, Qt::UserRole, d.id);
+        end->setData(0, Qt::UserRole + 1, true);   // second line: no tick of its own
+        end->setText(2, tr("end"));
+        end->setToolTip(2, tr("At %1 s (median of the last 5 frames)").arg(s.tEnd, 0, 'f', 2));
+        put(end, s.angleEnd, s.leftEnd, s.rightEnd, s.baseEnd, s.heightEnd, s.volumeEnd);
+        end->setToolTip(c0, tr("Angle change after release: %1°/s").arg(fmt(s.angleRate, 3)));
+        end->setToolTip(c0 + 3, tr("Largest base after release: %1 %2; change: %3 %2/s").arg(fmt(s.baseMax, 3), L, fmt(s.baseRate, 4)));
+        end->setToolTip(c0 + 5, tr("Volume change after release: %1 %2/s").arg(fmt(s.volumeRate, 4), V));
     }
     view_->setChosen(chosenIds());
+    fitTableWidth();
+}
+
+void MainWindow::fitTableWidth() {
+    // the side panel is never narrower than the table's columns (the frame view gives way)
+    if (!split_ || split_->count() < 2) return;
+    QWidget* side = split_->widget(1);
+    for (int c = 0; c < table_->columnCount(); ++c) table_->resizeColumnToContents(c);
+    const int margins = side->width() - table_->viewport()->width();
+    side->setMinimumWidth(std::max(0, table_->header()->length() + 4 + margins));
 }
 
 QList<int> MainWindow::chosenIds() const {
     QList<int> ids;
     for (int i = 0; i < table_->topLevelItemCount(); ++i)
-        if (table_->topLevelItem(i)->checkState(0) == Qt::Checked) ids << table_->topLevelItem(i)->data(0, Qt::UserRole).toInt();
+        if (!table_->topLevelItem(i)->data(0, Qt::UserRole + 1).toBool() && table_->topLevelItem(i)->checkState(0) == Qt::Checked) ids << table_->topLevelItem(i)->data(0, Qt::UserRole).toInt();
     if (ids.isEmpty()) ids << -1;   // none chosen (an empty list would mean all)
     return ids;
 }

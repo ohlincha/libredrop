@@ -1,5 +1,6 @@
 #include "frameview.h"
 
+#include <algorithm>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -10,8 +11,8 @@
 
 FrameView::FrameView(QWidget* parent) : QWidget(parent) {
     setMinimumSize(320, 160);
-    setToolTip(tr("Dots: the detected edge. Line: the fitted Young–Laplace shape.\n"
-                  "Click a drop to zoom to it; wheel: zoom; drag: move; double-click: all drops / whole frame."));
+    setToolTip(tr("<p>Dots: the detected edge. Line: the fitted Young–Laplace shape.</p>"
+                  "<p>Click a drop to zoom to it; wheel: zoom; drag: move; double-click: all drops / whole frame.</p>"));
     setMessage(tr("Open a video or an image (File ▸ Open, or drop a file here)."));
 }
 
@@ -68,6 +69,24 @@ void FrameView::fit(const QRectF& r) {
     if (v.width() / v.height() < aspect) v.setWidth(v.height() * aspect);
     else v.setHeight(v.width() / aspect);
     v.moveCenter(r.center());
+    view_ = v;
+    clampView();
+}
+
+void FrameView::clampView() {
+    if (image_.isNull() || view_.isEmpty() || width() <= 0 || height() <= 0) return;
+    const double W = image_.width(), H = image_.height(), aspect = double(width()) / height();
+    // largest view: the whole frame fits; smallest: 16 widget pixels per image pixel
+    const double maxW = std::max(W, H * aspect), minW = std::max(4.0, width() / 16.0);
+    const double w = std::clamp(view_.width(), minW, maxW);
+    QRectF v(0, 0, w, w / aspect);
+    v.moveCenter(view_.center());
+    // per axis: centred if the frame is narrower than the view, else no empty margin beside the frame
+    auto place = [](double lo, double len, double size) {
+        return len >= size ? (size - len) / 2 : std::clamp(lo, 0.0, size - len);
+    };
+    v.moveLeft(place(v.left(), v.width(), W));
+    v.moveTop(place(v.top(), v.height(), H));
     view_ = v;
 }
 
@@ -229,6 +248,7 @@ void FrameView::mouseMoveEvent(QMouseEvent* e) {
     dragged_ = true;
     mode_ = Mode::Manual;
     view_ = dragView_.translated(-d / scale());
+    clampView();
     update();
 }
 
@@ -261,8 +281,8 @@ void FrameView::wheelEvent(QWheelEvent* e) {
     const QPointF at = toImage(e->position());
     QRectF v(0, 0, view_.width() * f, view_.height() * f);
     v.moveTopLeft(at - QPointF((at.x() - view_.left()) * f, (at.y() - view_.top()) * f));   // cursor point stays put
-    if (v.width() < 20 || v.width() > 4 * image_.width()) return;
     view_ = v;
+    clampView();
     mode_ = Mode::Manual;
     update();
 }
@@ -275,6 +295,7 @@ void FrameView::resizeEvent(QResizeEvent* e) {
         if (sc > 0 && !view_.isEmpty()) {
             view_ = QRectF(0, 0, width() / sc, height() / sc);
             view_.moveCenter(c);
+            clampView();
         }
         return;
     }
