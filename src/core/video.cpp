@@ -72,6 +72,8 @@ auto parallelMap(const std::vector<T>& in, F f) -> std::vector<decltype(f(in[0])
 // Strip what the tables and plots do not need (outline points), image coordinates for the cut-out.
 TrackPoint point(int frame, double t, SceneDrop d) {
     d.a.outline.clear();
+    d.a.fitted.clear();
+    d.a.fitted.shrink_to_fit();
     d.a.outline.shrink_to_fit();
     return {frame, t, std::move(d)};
 }

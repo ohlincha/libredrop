@@ -391,6 +391,7 @@ double profileDistance(const Profile& pr, double x, double z) {
 struct YLFit {
     AngleResult r;
     double b = 0, bond = 0, volume = 0;
+    std::vector<Pt> curve;   // the fitted profile, baseline frame, left contact → apex → right contact
 };
 
 YLFit youngLaplaceMethod(const std::vector<Pt>& Pall, const Circle& c, double bondPerPx2) {
@@ -431,6 +432,11 @@ YLFit youngLaplaceMethod(const std::vector<Pt>& Pall, const Circle& c, double bo
     out.b = b;
     out.bond = bond;
     out.volume = v * b * b * b;
+    std::vector<Pt> half;
+    for (std::size_t i = 0; i < pr.Z.size() && pr.Z[i] <= H / b; i += 4) half.push_back({pr.X[i] * b, H - pr.Z[i] * b});
+    half.push_back({x * b, 0});
+    for (auto it = half.rbegin(); it != half.rend(); ++it) out.curve.push_back({p[0] - it->x, it->y});
+    for (const Pt& q : half) out.curve.push_back({p[0] + q.x, q.y});
     return out;
 }
 
@@ -646,6 +652,7 @@ DropAnalysis analyzeDrop(const GrayImage& im, const DropOptions& opt) {
         }
     }
     a.methods = {yl.r, tang, circ, ell, hw};
+    for (const Pt& q : yl.curve) a.fitted.push_back(bl.toImage(q));
     a.apexRadiusPx = yl.r.ok ? yl.b : circle.R;
     a.bond = yl.bond;
     a.volumePx3 = yl.volume;

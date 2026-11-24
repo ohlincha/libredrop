@@ -74,6 +74,7 @@ struct DropAnalysis {
     double background = 0, dark = 0, threshold = 0;
     Baseline baseline;
     std::vector<Pt> outline;                   // image coordinates
+    std::vector<Pt> fitted;                    // the Young–Laplace profile, image coordinates (empty if not fitted)
     bool needle = false, needleTouches = false;
     double needleWidthPx = 0;
     double heightPx = 0, baseWidthPx = 0, volumePx3 = 0;

@@ -345,6 +345,7 @@ void MainWindow::openFile(const QString& path) {
     timeLabel_->setVisible(!isImage_);
     timeLabel_->setText(tr("%1 s  (frame %2)").arg(0.0, 0, 'f', 2).arg(0));
     analyseButton_->setEnabled(true);
+    view_->resetView();
     showFrame(0);
     analyse();
 }
