@@ -5,3 +5,4 @@
 - 2026-11-24: base width from the Young-Laplace fit (7x steadier); drops picked after the analysis (--drops, report command reading the saved table).
 - 2026-11-24: first graphical program (src/gui): open video/image, background analysis, frame view with overlays, drop list with ticks, plot with cursor, export. Not yet run on a real display or by the user.
 - 2026-11-24: Motion-JPEG read without ffmpeg (MKV/AVI), compact copies (crop, grey, JPEG; File > Save compact copy), per-drop grey levels (crop-independent results), robust near-90 deg corners, parallel decoding/measuring, example as MJPEG; installers without ffmpeg.
+- 2026-11-24: v0.1.0 released (GitHub): .deb Debian 13/Ubuntu 24.04, Windows Setup, macOS universal dmg; all installed and tested on clean systems in CI without ffmpeg.
