@@ -172,7 +172,7 @@ void MainWindow::buildUi() {
     checks_->setTextFormat(Qt::RichText);
     checks_->setAlignment(Qt::AlignTop | Qt::AlignLeft);
     plot_ = new PlotWidget;
-    sinceContact_ = new QCheckBox(tr("Time since each drop touched the surface"));
+    sinceContact_ = new QCheckBox(tr("Time from each drop's contact with the surface (t = 0 at touch)"));
 
     auto* right = new QWidget;
     auto* rl = new QVBoxLayout(right);
