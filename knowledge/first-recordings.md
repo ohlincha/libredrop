@@ -36,3 +36,16 @@ Quick script (silhouette threshold, widest row = contact line), not LibreDrop: L
 expects a dark substrate on both sides, but here the glass top is a faint bright line and the drop's
 reflection sits below it. Next in LibreDrop: baseline from the drop/reflection contact points (widest points of
 the silhouette, where the outline has its corners). Videos stay on beryllium ~/goniometer (0.9 GB each).
+
+### Water on Scotch tape (backing side up), water_tape_1_20261124_104130, frame 56 s
+
+| Drop | Base | Height | Angle (circle fit, surface row 678 ±3) | Volume |
+|---|---|---|---|---|
+| left (small) | 1.42 mm | 0.70 mm | 90° (87.5–92.4°) | 0.7 uL |
+| right | 2.18 mm | 0.64 mm | 61° (59–62°) | 1.3 uL |
+
+Baseline lesson: the background darkens gradually towards the tape surface (from ~10 rows above the contact
+line), so a brightness-step search in the free columns finds the line too high (667 instead of 678, which
+moves the angle by ~10°). The contact line is the row where the silhouette is widest and below which its mirror
+image narrows; 3 px of baseline error ≈ 2.5° near 90°. The two drops differ by ~30°: the right one was likely
+dragged when the slide was moved (receding-like angle) or sits on a touched spot.
