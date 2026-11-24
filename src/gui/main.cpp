@@ -1,6 +1,7 @@
 // LibreDrop: graphical program.  LibreDrop [FILE | --example]
 #include <QAbstractButton>
 #include <QApplication>
+#include <QDialog>
 #include <QTabWidget>
 #include <QIcon>
 #include <QPalette>
@@ -87,11 +88,21 @@ int main(int argc, char** argv) {
             QTimer::singleShot(std::max(0, (ms > 0 ? ms : 3000) - 1000), &w, [&w, click] {
                 if (auto* b = w.findChild<QAbstractButton*>(click)) b->click();
             });
+        // LIBREDROP_COMPARE=a.mkv;b.mkv: open Compare samples with these, analyse, and screenshot that window instead
+        const QString cmp = qEnvironmentVariable("LIBREDROP_COMPARE");
+        if (!cmp.isEmpty())
+            QTimer::singleShot(300, &w, [&w, cmp] {
+                w.openCompare(cmp.split(QLatin1Char(';'), Qt::SkipEmptyParts));
+                if (auto* d = w.findChild<QDialog*>())
+                    if (auto* b = d->findChild<QAbstractButton*>(QStringLiteral("analyse"))) b->click();
+            });
         // LIBREDROP_SHOT_TAB=n: show that tab of the drop table
         const int tab = qEnvironmentVariableIntValue("LIBREDROP_SHOT_TAB");
         QTimer::singleShot(ms > 0 ? ms : 3000, &w, [&w, shot, tab] {
             if (auto* t = w.findChild<QTabWidget*>()) t->setCurrentIndex(tab);
-            w.grab().save(shot.section(QLatin1Char(','), 0, 0));
+            QWidget* target = &w;
+            if (auto* d = w.findChild<QDialog*>(); d && d->isVisible()) target = d;
+            target->grab().save(shot.section(QLatin1Char(','), 0, 0));
             w.close();
         });
     }

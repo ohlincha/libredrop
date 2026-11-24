@@ -64,7 +64,8 @@ private:
     QSlider* slider_ = nullptr;
     QLabel* timeLabel_ = nullptr;
     QTreeWidget* table_ = nullptr;
-    QTreeWidget* soakTable_ = nullptr;     // soaking: angle at fixed times, sorptivity, absorption
+    QTreeWidget* soakTable_ = nullptr;
+    class CompareDialog* compare_ = nullptr;     // soaking: angle at fixed times, sorptivity, absorption
     class QTabWidget* tabs_ = nullptr;
     class QLineEdit* soakTimes_ = nullptr;
     QDoubleSpinBox* evaporation_ = nullptr;
@@ -76,7 +77,10 @@ private:
     void useAsGlassReference();
     void loadEvaporation();                // the current liquid's stored value
     QSplitter* split_ = nullptr;   // frame | side panel
-    void fitTableWidth();                 // widen the side panel so every table column shows
+    void fitTableWidth();
+public:
+    void openCompare(const QStringList& files);   // File ▸ Compare samples (with these recordings added)
+private:                 // widen the side panel so every table column shows
     QLabel* checks_ = nullptr;
     QWidget* plotBox_ = nullptr;
     QDoubleSpinBox* scale_ = nullptr;

@@ -1,5 +1,7 @@
 #include "mainwindow.h"
 
+#include "comparedialog.h"
+
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
@@ -95,6 +97,7 @@ void MainWindow::buildUi() {
     file->addAction(tr("Save &compact copy…"), this, &MainWindow::saveCompact)
         ->setToolTip(tr("<p>Copy of the recording with only the band around the drops, in grey, as JPEG frames: typically "
                         "5–15× smaller, opens without ffmpeg, gives the same results.</p>"));
+    file->addAction(tr("Compare &samples…"), this, [this] { openCompare({}); });
     file->addSeparator();
     file->addAction(tr("&Quit"), QKeySequence::Quit, this, &QWidget::close);
     QMenu* help = menuBar()->addMenu(tr("&Help"));
@@ -352,6 +355,35 @@ void MainWindow::buildUi() {
     loadEvaporation();
     sinceContact_->setChecked(st.value("sinceContact", false).toBool());
     statusBar()->showMessage(tr("Open a recording to start."));
+}
+
+void MainWindow::openCompare(const QStringList& files) {
+    {
+        if (!compare_) {
+            CompareSettings cs;
+            cs.options = [this](int w) {
+                ld::VideoOptions o = options();
+                const ld::VideoOptions defaults;
+                o.minPoints = defaults.minPoints, o.minDuration = defaults.minDuration, o.step = step_->value();
+                const QVariant saved = QSettings().value(QStringLiteral("scaleFor/%1").arg(w));
+                o.scene.drop.pxPerMm = !saved.isNull() ? saved.toDouble() : defaultScale(w) > 0 ? defaultScale(w) : scale_->value();
+                return o;
+            };
+            cs.soak = [this] { return soakOptions(); };
+            cs.describe = [this] {
+                return tr("Liquid: <b>%1</b> · evaporation correction: %2 · scale: as set for each camera mode")
+                    .arg(liquid_->currentText().toHtmlEscaped(),
+                         evaporation_->value() > 0 ? tr("%1 µL/s").arg(evaporation_->value(), 0, 'f', 4)
+                                                   : tr("<span style='color:#b07800'><b>none</b> (set it in the Soaking tab "
+                                                        "from a glass recording first)</span>"));
+            };
+            compare_ = new CompareDialog(cs, this);
+            compare_->setAttribute(Qt::WA_DeleteOnClose, false);
+        }
+        compare_->show();
+        compare_->raise();
+        if (!files.isEmpty()) compare_->addFiles(files);
+    }
 }
 
 void MainWindow::liquidChanged() {

@@ -8,3 +8,4 @@
 - 2026-11-24: v0.1.0 released (GitHub): .deb Debian 13/Ubuntu 24.04, Windows Setup, macOS universal dmg; all installed and tested on clean systems in CI without ffmpeg.
 - 2026-11-24: soaking analysis (angle at fixed times after contact, sorptivity S from V = V0 − S·∫A d√t with evaporation added back, absorption time) in core, CLI (--at, --evaporation) and a Soaking tab; pendant-drop γ in core/CLI (example: 49–66 mN/m for water: small drops, scale unverified); play button.
 - 2026-11-24: v0.1.1 released (soaking tab with glass-reference guide, play, table/zoom fixes).
+- 2026-11-24: Compare samples window (several recordings, sample names from file names, mean ± SD per sample, CSV); subtle colour.

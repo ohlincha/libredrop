@@ -45,6 +45,10 @@ yet.
    after release with evaporation added back; R² shows how well the drop follows it) and when the drop was
    absorbed. Untick drops that are not usable. On glass, S should come out ≈ 0.
 
+5. **Compare** (File ▸ Compare samples…): add all recordings of all samples, Analyse. Recordings with the same
+   sample name (from the file name without date/time and repeat number; double-click to change) are averaged:
+   mean ± standard deviation of the ticked drops; Export CSV gives each drop and the per-sample means and SDs.
+
 S is proportional to the image scale: compare samples measured at the same scale. Not yet tried on real
 separators.
 
