@@ -34,6 +34,8 @@
 #include <QStatusBar>
 #include <QThreadPool>
 #include <QTimer>
+#include <QStyle>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QtConcurrent>
@@ -109,7 +111,19 @@ void MainWindow::buildUi() {
     slider_->setEnabled(false);
     timeLabel_ = new QLabel;
     timeLabel_->setMinimumWidth(170);
+    playButton_ = new QToolButton;
+    playButton_->setObjectName(QStringLiteral("play"));
+    playButton_->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
+    playButton_->setToolTip(tr("Play / pause (Space)"));
+    playButton_->setShortcut(Qt::Key_Space);
+    playButton_->setEnabled(false);
+    speed_ = new QComboBox;
+    for (double f : {0.1, 0.25, 0.5, 1.0, 2.0, 4.0}) speed_->addItem(QStringLiteral("%1×").arg(f), f);
+    speed_->setCurrentIndex(3);
+    speed_->setToolTip(tr("Playback speed (1× = real time)"));
     auto* timeRow = new QHBoxLayout;
+    timeRow->addWidget(playButton_);
+    timeRow->addWidget(speed_);
     timeRow->addWidget(slider_, 1);
     timeRow->addWidget(timeLabel_);
     auto* left = new QWidget;
@@ -215,8 +229,27 @@ void MainWindow::buildUi() {
     connect(frameTimer_, &QTimer::timeout, this, [this] { showFrame(slider_->value()); });
     connect(slider_, &QSlider::valueChanged, this, [this](int v) {
         timeLabel_->setText(tr("%1 s  (frame %2)").arg(frameTime(v), 0, 'f', 2).arg(v));
-        frameTimer_->start();
+        if (playTimer_->isActive()) showFrame(v);   // (the latest request wins while a frame is being read)
+        else frameTimer_->start();
     });
+    playTimer_ = new QTimer(this);
+    playTimer_->setInterval(15);
+    connect(playTimer_, &QTimer::timeout, this, [this] {
+        const double t = playFrom_ + playClock_.elapsed() / 1000.0 * speed_->currentData().toDouble();
+        const int last = slider_->maximum();
+        const int i = frameAt(t);
+        if (i >= last || t > frameTime(last)) {
+            slider_->setValue(last);
+            setPlaying(false);
+            return;
+        }
+        if (i != slider_->value()) slider_->setValue(i);
+    });
+    connect(playButton_, &QToolButton::clicked, this, [this] { setPlaying(!playTimer_->isActive()); });
+    connect(speed_, &QComboBox::currentIndexChanged, this, [this] {
+        if (playTimer_->isActive()) setPlaying(true);   // restart the clock from here
+    });
+    connect(slider_, &QSlider::sliderPressed, this, [this] { setPlaying(false); });
     connect(analyseButton_, &QPushButton::clicked, this, [this] {
         if (watcher_.isRunning() || compactWatcher_.isRunning()) cancel();
         else analyse();
@@ -342,6 +375,10 @@ void MainWindow::openFile(const QString& path) {
     slider_->blockSignals(false);
     slider_->setEnabled(!isImage_);
     slider_->setVisible(!isImage_);
+    setPlaying(false);
+    playButton_->setEnabled(!isImage_);
+    playButton_->setVisible(!isImage_);
+    speed_->setVisible(!isImage_);
     plotBox_->setVisible(!isImage_);
     timeLabel_->setVisible(!isImage_);
     timeLabel_->setText(tr("%1 s  (frame %2)").arg(0.0, 0, 'f', 2).arg(0));
@@ -527,6 +564,18 @@ void MainWindow::updatePlot() {
 double MainWindow::frameTime(int index) const {
     if (index < 0 || index >= int(info_.times.size())) return 0;
     return info_.times[std::size_t(index)] - info_.times[0];
+}
+
+void MainWindow::setPlaying(bool on) {
+    if (on && slider_->value() >= slider_->maximum()) slider_->setValue(0);   // at the end: from the start
+    if (on) {
+        playFrom_ = frameTime(slider_->value());
+        playClock_.restart();
+        playTimer_->start();
+    } else {
+        playTimer_->stop();
+    }
+    playButton_->setIcon(style()->standardIcon(on ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
 }
 
 int MainWindow::frameAt(double t) const {

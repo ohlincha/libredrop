@@ -4,6 +4,7 @@
 #include <QFutureWatcher>
 #include <QMainWindow>
 #include <QSplitter>
+#include <QElapsedTimer>
 #include <atomic>
 #include <memory>
 
@@ -76,6 +77,13 @@ private:
     QPushButton* analyseButton_ = nullptr;
     QProgressBar* progress_ = nullptr;
     QTimer* frameTimer_ = nullptr;
+    // playback: frames follow the clock (frames that can't be shown in time are skipped)
+    class QToolButton* playButton_ = nullptr;
+    class QComboBox* speed_ = nullptr;
+    QTimer* playTimer_ = nullptr;
+    QElapsedTimer playClock_;
+    double playFrom_ = 0;
+    void setPlaying(bool on);
 
     QString path_;
     bool isImage_ = false;

@@ -1,4 +1,5 @@
 // LibreDrop: graphical program.  LibreDrop [FILE | --example]
+#include <QAbstractButton>
 #include <QApplication>
 #include <QIcon>
 #include <QTimer>
@@ -48,6 +49,12 @@ int main(int argc, char** argv) {
                         QCoreApplication::sendEvent(v, &e);
                     }
                 }
+            });
+        // LIBREDROP_SHOT_PLAY=seconds: press play that long before the screenshot
+        const double play = qEnvironmentVariable("LIBREDROP_SHOT_PLAY").toDouble();
+        if (play > 0)
+            QTimer::singleShot(std::max(0, (ms > 0 ? ms : 3000) - int(1000 * play)), &w, [&w] {
+                if (auto* b = w.findChild<QAbstractButton*>(QStringLiteral("play"))) b->click();
             });
         QTimer::singleShot(ms > 0 ? ms : 3000, &w, [&w, shot] {
             w.grab().save(shot.section(QLatin1Char(','), 0, 0));
