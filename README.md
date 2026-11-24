@@ -33,7 +33,11 @@ yet.
 
 Planned: live camera and recording in the program, absorption models for separators, camera control, pendant-drop surface tension, surface free energy for non-absorbing samples.
 
-Build: C++17, Qt 6 (Core, Gui), Eigen 3.4+, CMake 3.21+.
+Install: Debian 13 / Ubuntu 24.04 `.deb` (pulls in ffmpeg), Windows installer (ffmpeg included), macOS `.dmg`
+(Intel and Apple Silicon; needs ffmpeg from Homebrew: `brew install ffmpeg`) from the releases page. Help ▸ Open
+example (or `LibreDrop --example`) shows a built-in recording, so no goniometer is needed to try it.
+
+Build: C++17, Qt 6 (Core, Gui, Widgets, Concurrent), Eigen 3.4+, CMake 3.21+; ffmpeg at run time for videos.
 
     cmake -S . -B build && cmake --build build && ctest --test-dir build
 

@@ -1,0 +1,192 @@
+name: Build installers
+# Installers for Linux (.deb: Debian 13, Ubuntu 24.04), Windows (Setup.exe with ffmpeg) and macOS (universal .dmg;
+# ffmpeg from Homebrew). Each is installed and tested on a clean system. A tag v* publishes a GitHub release with
+# whatever built; manual runs (workflow_dispatch) only keep the files as run artifacts.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  QT_VERSION: "6.8.3"
+
+jobs:
+  deb:
+    name: Linux .deb (${{ matrix.tag }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: "debian:trixie", tag: debian13 }
+          - { image: "ubuntu:24.04", tag: ubuntu24.04 }
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    steps:
+      - name: Build tools and libraries
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git cmake ninja-build g++ dpkg-dev file \
+            qt6-base-dev libeigen3-dev libgl1-mesa-dev
+      - uses: actions/checkout@v4
+      - name: Version
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "LD_VERSION=$(packaging/version.sh)" >> "$GITHUB_ENV"
+      - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+      - run: cmake --build build
+      - run: ctest --test-dir build --output-on-failure
+      - name: Package
+        run: |
+          (cd build && cpack)
+          mkdir -p dist
+          for f in build/libredrop_*.deb; do mv "$f" "dist/$(basename "${f%.deb}")_${{ matrix.tag }}.deb"; done
+          dpkg-deb -I dist/*.deb
+          dpkg-deb -c dist/*.deb
+      - name: Install with apt (pulls in ffmpeg) and test
+        run: |
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ./dist/*.deb
+          dpkg -s libredrop | grep -E '^(Version|Depends|Recommends):'
+          for f in /usr/bin/LibreDrop /usr/bin/LibreDropCLI /usr/share/applications/io.github.ohlincha.libredrop.desktop \
+                   /usr/share/icons/hicolor/256x256/apps/io.github.ohlincha.libredrop.png /usr/share/doc/libredrop/copyright; do
+            test -e "$f" || { echo "missing: $f"; exit 1; }
+          done
+          LibreDropCLI video examples/water_on_glass.mkv --scale 94.23 --density 997 --tension 72 | tee video.txt
+          grep -q "1 drops" video.txt
+          QT_QPA_PLATFORM=offscreen LIBREDROP_SHOT=shot.png,40 LibreDrop --example
+          test -s shot.png
+      - uses: actions/upload-artifact@v4
+        with: { name: "deb-${{ matrix.tag }}", path: dist/*.deb, if-no-files-found: error }
+
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jurplel/install-qt-action@v4
+        with: { version: "${{ env.QT_VERSION }}", arch: win64_msvc2022_64, cache: true }
+      - run: vcpkg install eigen3 --triplet x64-windows
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Version
+        shell: bash
+        run: echo "LD_VERSION=$(packaging/version.sh)" >> "$GITHUB_ENV"
+      - run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows
+      - run: cmake --build build
+      - run: ctest --test-dir build --output-on-failure
+      - run: cmake --install build --prefix dist/LibreDrop
+      - name: Deploy Qt; add ffmpeg (LGPL build, BtbN)
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          $d = "dist\LibreDrop"
+          foreach ($exe in "LibreDrop.exe", "LibreDropCLI.exe") {
+            windeployqt --release --no-compiler-runtime --no-translations --no-system-d3d-compiler --no-opengl-sw "$d\$exe"
+            if ($LASTEXITCODE -ne 0) { throw "windeployqt $exe failed" }
+          }
+          Copy-Item "$env:QT_ROOT_DIR\plugins\platforms\qoffscreen.dll" "$d\platforms\"
+          $zip = gh api repos/BtbN/FFmpeg-Builds/releases/latest -q '.assets[].name' |
+                 Where-Object { $_ -match '^ffmpeg-n[0-9.]+-latest-win64-lgpl-[0-9.]+\.zip$' } |
+                 Sort-Object { [version]($_ -replace '^ffmpeg-n([0-9.]+)-.*$', '$1') } | Select-Object -Last 1
+          if (-not $zip) { throw "no LGPL ffmpeg build found" }
+          "ffmpeg: $zip"
+          gh release download latest -R BtbN/FFmpeg-Builds -p $zip -D ffmpeg-dl
+          Expand-Archive "ffmpeg-dl\$zip" -DestinationPath ffmpeg-dl
+          $bin = Get-ChildItem -Recurse ffmpeg-dl -Filter ffmpeg.exe | Select-Object -First 1
+          Copy-Item $bin.FullName, (Join-Path $bin.DirectoryName ffprobe.exe) $d
+          $lic = Get-ChildItem -Recurse ffmpeg-dl -Filter LICENSE.txt | Select-Object -First 1
+          if ($lic) { Copy-Item $lic.FullName "$d\FFMPEG-LICENSE.txt" }
+          "ffmpeg (LGPL build from https://github.com/BtbN/FFmpeg-Builds, $zip); source: https://ffmpeg.org" |
+            Out-File "$d\FFMPEG-SOURCE.txt"
+          Get-ChildItem -Recurse -File $d | ForEach-Object { $_.FullName.Substring((Resolve-Path $d).Path.Length + 1) }
+          "total {0:N1} MB" -f ((Get-ChildItem -Recurse -File $d | Measure-Object Length -Sum).Sum / 1MB)
+      - name: Test the deployed folder (clean PATH, no Qt environment)
+        env: { QT_QPA_PLATFORM: offscreen }
+        run: |
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\WindowsPowerShell\v1.0"
+          Remove-Item env:QT_PLUGIN_PATH -ErrorAction SilentlyContinue
+          dist\LibreDrop\LibreDropCLI.exe video examples\water_on_glass.mkv --scale 94.23 | Tee-Object video.txt
+          if (-not (Select-String -Quiet "1 drops" video.txt)) { throw "video analysis failed" }
+          $env:LIBREDROP_SHOT = "shot.png,40"
+          $p = Start-Process dist\LibreDrop\LibreDrop.exe -ArgumentList "--example" -Wait -PassThru -NoNewWindow
+          if (-not (Test-Path shot.png)) { throw "GUI did not run ($($p.ExitCode))" }
+      - name: Installer (Inno Setup)
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+            if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+            $env:PATH += ";${env:ProgramFiles(x86)}\Inno Setup 6"
+          }
+          iscc /Qp "/DAppVersion=$env:LD_VERSION" packaging\windows\libredrop.iss
+          if ($LASTEXITCODE -ne 0) { throw "iscc failed" }
+      - name: Install silently and test the installed program
+        env: { QT_QPA_PLATFORM: offscreen }
+        run: |
+          $app = "C:\LibreDrop-test"
+          $p = Start-Process "dist\LibreDrop-$env:LD_VERSION-Windows-x64-Setup.exe" -Wait -PassThru -ArgumentList `
+                 "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CURRENTUSER", "/DIR=$app", "/LOG=setup.log"
+          if ($p.ExitCode -ne 0) { Get-Content setup.log; throw "setup failed ($($p.ExitCode))" }
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\WindowsPowerShell\v1.0"
+          & "$app\LibreDropCLI.exe" video examples\water_on_glass.mkv --scale 94.23 | Tee-Object video2.txt
+          if (-not (Select-String -Quiet "1 drops" video2.txt)) { throw "installed video analysis failed" }
+      - uses: actions/upload-artifact@v4
+        with: { name: windows-setup, path: "dist/LibreDrop-*-Windows-x64-Setup.exe", if-no-files-found: error }
+
+  macos:
+    name: macOS dmg (universal)
+    runs-on: macos-15
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "12.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jurplel/install-qt-action@v4
+        with: { version: "${{ env.QT_VERSION }}", cache: true }
+      - run: brew install eigen ninja ffmpeg
+      - name: Version
+        run: echo "LD_VERSION=$(packaging/version.sh)" >> "$GITHUB_ENV"
+      - run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET
+      - run: cmake --build build
+      - run: ctest --test-dir build --output-on-failure
+      - run: cmake --install build --prefix dist-mac
+      - name: Deploy Qt, sign ad hoc, test
+        run: |
+          APP=dist-mac/LibreDrop.app
+          macdeployqt "$APP" -executable="$APP/Contents/MacOS/LibreDropCLI" -libpath="$QT_ROOT_DIR/lib"
+          cp "$QT_ROOT_DIR/plugins/platforms/libqoffscreen.dylib" "$APP/Contents/PlugIns/platforms/"
+          install_name_tool -add_rpath @loader_path/../../Frameworks "$APP/Contents/PlugIns/platforms/libqoffscreen.dylib"
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict "$APP"
+          lipo -archs "$APP/Contents/MacOS/LibreDrop"
+          env -u QT_PLUGIN_PATH "$APP/Contents/MacOS/LibreDropCLI" video examples/water_on_glass.mkv --scale 94.23 | tee video.txt
+          grep -q "1 drops" video.txt
+          env -u QT_PLUGIN_PATH QT_QPA_PLATFORM=offscreen LIBREDROP_SHOT=shot.png,40 "$APP/Contents/MacOS/LibreDrop" --example
+          test -s shot.png
+      - name: dmg
+        run: |
+          mkdir -p dmg dist
+          ditto dist-mac/LibreDrop.app dmg/LibreDrop.app
+          ln -s /Applications dmg/Applications
+          out="dist/LibreDrop-$LD_VERSION-macOS-universal.dmg"
+          for i in 1 2 3; do hdiutil create -volname LibreDrop -srcfolder dmg -ov -format UDZO "$out" && break; sleep 10; done
+          test -f "$out" && ls -l "$out"
+      - uses: actions/upload-artifact@v4
+        with: { name: macos-dmg, path: "dist/LibreDrop-*-macOS-universal.dmg", if-no-files-found: error }
+
+  release:
+    name: GitHub release
+    if: startsWith(github.ref, 'refs/tags/v') && !cancelled()
+    needs: [deb, windows, macos]
+    runs-on: ubuntu-24.04
+    permissions: { contents: write }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: files, merge-multiple: true }
+      - name: Create or update the release
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          ls -l files
+          tag="${GITHUB_REF#refs/tags/}"
+          gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$tag" -R "$GITHUB_REPOSITORY" --title "LibreDrop ${tag#v}" --notes "Installers for LibreDrop ${tag#v}."
+          gh release upload "$tag" files/* -R "$GITHUB_REPOSITORY" --clobber

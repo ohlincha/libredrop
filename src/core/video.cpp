@@ -1,5 +1,8 @@
 #include "video.h"
 
+#include <QCoreApplication>
+#include <QDir>
+#include <QFileInfo>
 #include <QImage>
 #include <QProcess>
 #include <algorithm>
@@ -9,7 +12,24 @@ namespace ld {
 
 namespace {
 
-QString ffmpegProgram() { return qEnvironmentVariable("LIBREDROP_FFMPEG", QStringLiteral("ffmpeg")); }
+// ffmpeg: LIBREDROP_FFMPEG, else next to the program (Windows installer, macOS bundle), else Homebrew's (apps
+// started from the Finder don't have it on PATH), else on PATH.
+QString ffmpegProgram() {
+    if (qEnvironmentVariableIsSet("LIBREDROP_FFMPEG")) return qEnvironmentVariable("LIBREDROP_FFMPEG");
+#ifdef Q_OS_WIN
+    const QString exe = QStringLiteral("ffmpeg.exe");
+#else
+    const QString exe = QStringLiteral("ffmpeg");
+#endif
+    QStringList dirs;
+    if (QCoreApplication::instance()) dirs << QCoreApplication::applicationDirPath();
+#ifdef Q_OS_MACOS
+    dirs << QStringLiteral("/opt/homebrew/bin") << QStringLiteral("/usr/local/bin");
+#endif
+    for (const QString& d : dirs)
+        if (QFileInfo::exists(QDir(d).filePath(exe))) return QDir(d).filePath(exe);
+    return QStringLiteral("ffmpeg");
+}
 
 QString ffprobeProgram() {
     QString p = ffmpegProgram();

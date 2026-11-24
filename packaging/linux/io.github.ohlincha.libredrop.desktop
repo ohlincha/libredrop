@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Name=LibreDrop
+GenericName=Contact Angle Analysis
+Comment=Contact angle and drop shape from goniometer videos and images
+Exec=LibreDrop %f
+Icon=io.github.ohlincha.libredrop
+Terminal=false
+Categories=Science;Physics;Chemistry;
+Keywords=contact angle;goniometer;wetting;drop shape;Young-Laplace;surface tension;
+MimeType=video/x-matroska;video/mp4;video/x-msvideo;video/quicktime;image/png;image/jpeg;image/tiff;
+StartupWMClass=LibreDrop
+Actions=Example;
+
+[Desktop Action Example]
+Name=LibreDrop (example recording)
+Exec=LibreDrop --example

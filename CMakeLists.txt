@@ -41,6 +41,8 @@ if(LIBREDROP_GUI)
   set_target_properties(libredrop-gui PROPERTIES OUTPUT_NAME LibreDrop)
 endif()
 
+include(cmake/Install.cmake)
+
 enable_testing()
 find_package(Qt6 REQUIRED COMPONENTS Test)
 file(GLOB TEST_SOURCES CONFIGURE_DEPENDS tests/test_*.cpp)
