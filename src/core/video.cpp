@@ -129,15 +129,6 @@ VideoResult track(std::vector<Measured> frames, const VideoOptions& opt) {
 
 }  // namespace
 
-int DropTrack::released() const {
-    bool seenNeedle = false;
-    for (std::size_t i = 0; i < points.size(); ++i) {
-        if (points[i].drop.onNeedle) seenNeedle = true;
-        else if (seenNeedle || i == 0) return int(i);
-    }
-    return -1;
-}
-
 VideoInfo probeVideo(const QString& path) {
     VideoInfo v;
     QByteArray out;

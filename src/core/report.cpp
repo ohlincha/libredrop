@@ -52,7 +52,7 @@ double slope(const std::vector<double>& t, const std::vector<double>& y) {
 
 }  // namespace
 
-QString tracksCsv(const VideoResult& r, const Units& u) {
+QString tracksCsv(const VideoResult& r, const Units& u, const QList<int>& ids) {
     const QString L = u.lenUnit(), V = u.volUnit();
     QStringList out;
     out << QStringLiteral("drop,frame,time_s,since_contact_s,needle,ok,angle_deg,yl_left,yl_right,tangent_left,tangent_right,"
@@ -60,6 +60,7 @@ QString tracksCsv(const VideoResult& r, const Units& u) {
                .arg(L, V);
     for (const DropTrack& t : r.tracks)
         for (const TrackPoint& p : t.points) {
+            if (!ids.isEmpty() && !ids.contains(t.id)) break;
             const DropAnalysis& a = p.drop.a;
             auto m = [&](const char* name) { return a.method(QString::fromLatin1(name)); };
             auto side = [&](const char* name, bool left) {
@@ -81,37 +82,121 @@ QString tracksCsv(const VideoResult& r, const Units& u) {
     return out.join(QLatin1Char('\n')) + QLatin1Char('\n');
 }
 
-TrackSummary summarize(const DropTrack& t, const Units& u) {
-    TrackSummary s;
-    s.id = t.id;
-    s.points = int(t.points.size());
-    if (t.points.empty()) return s;
-    s.x = u.len(t.points.front().drop.xc);
-    s.tContact = t.tContact();
-    s.tEnd = t.points.back().t;
-    for (const TrackPoint& p : t.points) s.failed += !usable(p.drop.a);
-    const int rel = t.released();
-    if (rel < 0) return s;
-    s.tRelease = t.points[std::size_t(rel)].t;
-    std::vector<double> tt, ang, base, vol;
-    for (std::size_t i = std::size_t(rel); i < t.points.size(); ++i) {
-        const DropAnalysis& a = t.points[i].drop.a;
-        tt.push_back(t.points[i].t);
-        ang.push_back(angleOf(a));
-        base.push_back(usable(a) ? u.len(a.baseWidthPx) : kNaN);
-        vol.push_back(usable(a) && a.volumePx3 > 0 ? u.vol(a.volumePx3) : kNaN);
+int DropSeries::released() const {
+    bool seenNeedle = false;
+    for (std::size_t i = 0; i < t.size(); ++i) {
+        if (needle[i]) seenNeedle = true;
+        else if (seenNeedle || i == 0) return int(i);
     }
-    const std::size_t k = std::min<std::size_t>(5, tt.size());
-    auto head = [&](const std::vector<double>& v) { return median({v.begin(), v.begin() + long(k)}); };
-    auto tail = [&](const std::vector<double>& v) { return median({v.end() - long(k), v.end()}); };
-    s.angleRelease = head(ang), s.angleEnd = tail(ang);
-    s.baseRelease = head(base), s.baseEnd = tail(base);
-    s.volumeRelease = head(vol), s.volumeEnd = tail(vol);
+    return -1;
+}
+
+SeriesSet seriesOf(const VideoResult& r, const Units& u) {
+    SeriesSet s;
+    s.lenUnit = u.lenUnit(), s.volUnit = u.volUnit();
+    for (const DropTrack& t : r.tracks) {
+        DropSeries d;
+        d.id = t.id;
+        if (!t.points.empty()) d.x = u.len(t.points.front().drop.xc);
+        for (const TrackPoint& p : t.points) {
+            const DropAnalysis& a = p.drop.a;
+            const bool ok = usable(a);
+            d.t.push_back(p.t);
+            d.angle.push_back(angleOf(a));
+            d.base.push_back(ok ? u.len(a.baseWidthPx) : kNaN);
+            d.volume.push_back(ok && a.volumePx3 > 0 ? u.vol(a.volumePx3) : kNaN);
+            d.needle.push_back(p.drop.onNeedle);
+        }
+        s.drops.push_back(std::move(d));
+    }
+    return s;
+}
+
+bool readTracksCsv(const QString& text, SeriesSet* out, QString* error) {
+    const QStringList lines = text.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    if (lines.isEmpty()) {
+        *error = QStringLiteral("empty table");
+        return false;
+    }
+    const QStringList head = lines[0].trimmed().split(QLatin1Char(','));
+    auto col = [&](const QString& prefix) {
+        for (int i = 0; i < head.size(); ++i)
+            if (head[i] == prefix || head[i].startsWith(prefix + QLatin1Char('_'))) return i;
+        return -1;
+    };
+    const int cDrop = col("drop"), cT = col("time_s"), cNeedle = col("needle"), cOk = col("ok"), cAngle = col("angle_deg"),
+              cBase = col("base"), cVol = col("volume"), cX = col("x");
+    if (cDrop < 0 || cT < 0 || cNeedle < 0 || cOk < 0 || cAngle < 0 || cBase < 0 || cVol < 0) {
+        *error = QStringLiteral("not a LibreDrop video table (columns drop, time_s, needle, ok, angle_deg, base_*, volume_*)");
+        return false;
+    }
+    SeriesSet s;
+    s.lenUnit = head[cBase].section(QLatin1Char('_'), 1);
+    s.volUnit = head[cVol].section(QLatin1Char('_'), 1);
+    auto val = [](const QStringList& f, int i) {
+        bool ok = false;
+        const double v = i >= 0 && i < f.size() ? f[i].toDouble(&ok) : kNaN;
+        return ok ? v : kNaN;
+    };
+    for (int li = 1; li < lines.size(); ++li) {
+        const QStringList f = lines[li].trimmed().split(QLatin1Char(','));
+        if (f.size() < head.size() - 1) continue;
+        const int id = f[cDrop].toInt();
+        auto it = std::find_if(s.drops.begin(), s.drops.end(), [&](const DropSeries& d) { return d.id == id; });
+        if (it == s.drops.end()) {
+            s.drops.push_back({});
+            it = s.drops.end() - 1;
+            it->id = id;
+            it->x = val(f, cX);
+        }
+        const bool ok = f[cOk] == QLatin1String("1");
+        it->t.push_back(val(f, cT));
+        it->angle.push_back(ok ? val(f, cAngle) : kNaN);
+        it->base.push_back(ok ? val(f, cBase) : kNaN);
+        it->volume.push_back(ok ? val(f, cVol) : kNaN);
+        it->needle.push_back(f[cNeedle] == QLatin1String("1"));
+    }
+    *out = std::move(s);
+    return true;
+}
+
+void selectDrops(SeriesSet* s, const QList<int>& ids) {
+    if (ids.isEmpty()) return;
+    s->drops.erase(std::remove_if(s->drops.begin(), s->drops.end(), [&](const DropSeries& d) { return !ids.contains(d.id); }),
+                   s->drops.end());
+}
+
+TrackSummary summarize(const DropSeries& d) {
+    TrackSummary s;
+    s.id = d.id;
+    s.points = int(d.t.size());
+    if (d.t.empty()) return s;
+    s.x = d.x;
+    s.tContact = d.tContact();
+    s.tEnd = d.t.back();
+    for (double a : d.angle) s.failed += !std::isfinite(a);
+    const int rel = d.released();
+    if (rel < 0) return s;
+    s.tRelease = d.t[std::size_t(rel)];
+    auto from = [&](const std::vector<double>& v) { return std::vector<double>(v.begin() + rel, v.end()); };
+    const std::vector<double> tt = from(d.t), ang = from(d.angle), base = from(d.base), vol = from(d.volume);
+    // first and last few usable values
+    auto edge = [](const std::vector<double>& v, bool first) {
+        std::vector<double> got;
+        for (std::size_t i = 0; i < v.size() && got.size() < 5; ++i) {
+            const double x = v[first ? i : v.size() - 1 - i];
+            if (std::isfinite(x)) got.push_back(x);
+        }
+        return median(got);
+    };
+    s.angleRelease = edge(ang, true), s.angleEnd = edge(ang, false);
+    s.baseRelease = edge(base, true), s.baseEnd = edge(base, false);
+    s.volumeRelease = edge(vol, true), s.volumeEnd = edge(vol, false);
     s.angleRate = slope(tt, ang), s.baseRate = slope(tt, base), s.volumeRate = slope(tt, vol);
     return s;
 }
 
-QImage plotTracks(const VideoResult& r, const Units& u, int W, int H) {
+QImage plotSeries(const SeriesSet& r, int W, int H) {
     QImage img(W, H, QImage::Format_RGB32);
     img.fill(Qt::white);
     QPainter p(&img);
@@ -120,22 +205,21 @@ QImage plotTracks(const VideoResult& r, const Units& u, int W, int H) {
                              QColor(0x8c564b), QColor(0xe377c2), QColor(0x17becf)};
     struct Panel {
         QString title;
-        std::function<double(const DropAnalysis&)> f;
+        std::vector<double> DropSeries::*v;
     };
     const Panel panels[] = {
-        {QStringLiteral("contact angle (deg)"), [](const DropAnalysis& a) { return angleOf(a); }},
-        {QStringLiteral("base width (%1)").arg(u.lenUnit()), [&](const DropAnalysis& a) { return usable(a) ? u.len(a.baseWidthPx) : kNaN; }},
-        {QStringLiteral("volume (%1)").arg(u.volUnit()),
-         [&](const DropAnalysis& a) { return usable(a) && a.volumePx3 > 0 ? u.vol(a.volumePx3) : kNaN; }},
+        {QStringLiteral("contact angle (deg)"), &DropSeries::angle},
+        {QStringLiteral("base width (%1)").arg(r.lenUnit), &DropSeries::base},
+        {QStringLiteral("volume (%1)").arg(r.volUnit == QLatin1String("uL") ? QStringLiteral("µL") : r.volUnit), &DropSeries::volume},
     };
     double tMax = 0;
-    for (const DropTrack& t : r.tracks)
-        if (!t.points.empty()) tMax = std::max(tMax, t.points.back().t - t.tContact());
+    for (const DropSeries& t : r.drops)
+        if (!t.t.empty()) tMax = std::max(tMax, t.t.back() - t.tContact());
     if (tMax <= 0) tMax = 1;
     const double tStep = niceStep(tMax, 6);
     tMax = std::ceil(tMax / tStep - 1e-9) * tStep;
     const int perRow = std::max(1, (W - 120) / 90);
-    const int legendRows = (int(r.tracks.size()) + perRow - 1) / perRow;
+    const int legendRows = (int(r.drops.size()) + perRow - 1) / perRow;
     const int left = 90, right = 20, top = 30 + 20 * legendRows, gap = 50, bottom = 50;
     const int ph = (H - top - bottom - 2 * gap) / 3;
     QFont font = p.font();
@@ -145,11 +229,9 @@ QImage plotTracks(const VideoResult& r, const Units& u, int W, int H) {
         const QRect box(left, top + k * (ph + gap), W - left - right, ph);
         // range: 2nd–98th percentile of all values, padded
         std::vector<double> all;
-        for (const DropTrack& t : r.tracks)
-            for (const TrackPoint& q : t.points) {
-                const double v = panels[k].f(q.drop.a);
+        for (const DropSeries& t : r.drops)
+            for (double v : t.*panels[k].v)
                 if (std::isfinite(v)) all.push_back(v);
-            }
         double lo = 0, hi = 1;
         if (!all.empty()) {
             std::sort(all.begin(), all.end());
@@ -178,22 +260,23 @@ QImage plotTracks(const VideoResult& r, const Units& u, int W, int H) {
         auto X = [&](double t) { return box.left() + box.width() * t / tMax; };
         auto Y = [&](double v) { return box.bottom() - box.height() * (v - lo) / (hi - lo); };
         p.setClipRect(box);
-        for (std::size_t ti = 0; ti < r.tracks.size(); ++ti) {
-            const DropTrack& t = r.tracks[ti];
+        for (std::size_t ti = 0; ti < r.drops.size(); ++ti) {
+            const DropSeries& t = r.drops[ti];
+            const std::vector<double>& vals = t.*panels[k].v;
             const QColor c = colors[ti % 8];
             QPainterPath path;
             bool pen = false;
-            for (const TrackPoint& q : t.points) {
-                const double v = panels[k].f(q.drop.a);
+            for (std::size_t i = 0; i < t.t.size(); ++i) {
+                const double v = vals[i];
                 if (!std::isfinite(v)) {
                     pen = false;
                     continue;
                 }
-                const QPointF pt(X(q.t - t.tContact()), Y(v));
+                const QPointF pt(X(t.t[i] - t.tContact()), Y(v));
                 if (pen) path.lineTo(pt);
                 else path.moveTo(pt);
                 pen = true;
-                if (q.drop.onNeedle) {   // on the needle: hollow markers
+                if (t.needle[i]) {   // on the needle: hollow markers
                     p.setPen(c);
                     p.setBrush(Qt::NoBrush);
                     p.drawEllipse(pt, 2.5, 2.5);
@@ -208,12 +291,12 @@ QImage plotTracks(const VideoResult& r, const Units& u, int W, int H) {
     p.setPen(Qt::black);
     p.drawText(QRect(left, H - 24, W - left - right, 20), Qt::AlignCenter,
                QStringLiteral("time since the drop touched the surface (s); hollow markers: needle still in the drop"));
-    for (std::size_t ti = 0; ti < r.tracks.size(); ++ti) {   // legend
+    for (std::size_t ti = 0; ti < r.drops.size(); ++ti) {   // legend
         p.setPen(QPen(colors[ti % 8], 3));
         const int x = left + 90 * int(ti % std::size_t(perRow)), y = 12 + 20 * int(ti / std::size_t(perRow));
         p.drawLine(x, y, x + 22, y);
         p.setPen(Qt::black);
-        p.drawText(x + 28, y + 5, QStringLiteral("drop %1").arg(r.tracks[ti].id));
+        p.drawText(x + 28, y + 5, QStringLiteral("drop %1").arg(r.drops[ti].id));
     }
     return img;
 }

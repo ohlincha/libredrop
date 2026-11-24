@@ -22,7 +22,8 @@ command line. No graphical program yet; not yet tried on absorbing samples (sepa
   whether the needle is still in it, and the checks; a summary (angle, base and volume at release and at the end,
   rates of change) and a plot.
 - `LibreDropCLI analyze IMAGE` (one drop), `scene IMAGE` (whole frame), `video FILE -o table.csv --plot plot.png`
-  (needs ffmpeg), `synth` (test drops).
+  (needs ffmpeg; `--drops 2,3` keeps only those drops), `report table.csv --drops 2,3 --plot plot.png` (summary and
+  plot again from a saved table, e.g. to leave out a stain), `synth` (test drops).
 
 Planned: graphical program with live camera, absorption models for separators, camera control, pendant-drop surface tension, surface free energy for non-absorbing samples.
 

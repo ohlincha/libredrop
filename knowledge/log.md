@@ -2,3 +2,4 @@
 - 2026-11-24: camera scale per video mode from the 10 mm calibration sphere (knowledge/camera-scale.md); beryllium lacks python3-opencv (capture script needs it).
 - 2026-11-24: baseline from the drop/reflection corners (bright substrate); outline = outermost dark pixel per row (light through the drop leaves bright patches inside). Real frames: glass 28.5/21/17.7°, tape 87.8/61°, fits 0.2 px rms; two crops in tests/data as regression tests.
 - 2026-11-24: whole-frame analysis (automatic surface from reflections, all drops, needle ignored) and video analysis with tracking, CSV and plot (knowledge/video.md); tested on the three first recordings.
+- 2026-11-24: base width from the Young-Laplace fit (7x steadier); drops picked after the analysis (--drops, report command reading the saved table).

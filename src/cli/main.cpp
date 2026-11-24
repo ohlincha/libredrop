@@ -2,6 +2,8 @@
 //   LibreDropCLI analyze IMAGE... [--scale PX_PER_MM --density KG_M3 --tension MN_M]
 //   LibreDropCLI scene IMAGE... [same options]: every drop on the surface of a whole frame
 //   LibreDropCLI video FILE|IMAGES... [same options] [--step N] [--start S] [--end S] [--fps F] [-o CSV] [--plot PNG]
+//     --drops 2,3: only these drops in the summary, table and plot (ids from a first run)
+//   LibreDropCLI report TABLE.csv [--drops 2,3] [--plot PNG]: summary and plot again from a saved table
 //   LibreDropCLI synth --theta DEG [--bond B] [--radius PX] [--tilt DEG] [--needle GAP_PX] -o FILE.png
 #include <QCoreApplication>
 #include <QGuiApplication>
@@ -22,6 +24,42 @@ QString arg(const QStringList& a, const QString& name, const QString& def = {}) 
     return i >= 0 && i + 1 < a.size() ? a[i + 1] : def;
 }
 void out(const QString& s) { std::fputs(qPrintable(s + QLatin1Char('\n')), stdout); }
+
+QList<int> dropIds(const QStringList& a) {
+    QList<int> ids;
+    for (const QString& x : arg(a, "--drops").split(QLatin1Char(','), Qt::SkipEmptyParts)) ids << x.toInt();
+    return ids;
+}
+
+void printSummaries(const ld::SeriesSet& set) {
+    const QString L = set.lenUnit, V = set.volUnit;
+    for (const ld::DropSeries& d : set.drops) {
+        const ld::TrackSummary s = ld::summarize(d);
+        out(QStringLiteral("drop %1 at x %2 %3: touched at %4 s, %5 frames (%6 not measurable)")
+                .arg(s.id).arg(s.x, 0, 'f', 2).arg(L).arg(s.tContact, 0, 'f', 2).arg(s.points).arg(s.failed));
+        if (s.tRelease < 0) {
+            out(QStringLiteral("  the needle stays in the drop"));
+            continue;
+        }
+        out(QStringLiteral("  free from %1 s (%2 s after contact) to %3 s")
+                .arg(s.tRelease, 0, 'f', 2).arg(s.tRelease - s.tContact, 0, 'f', 2).arg(s.tEnd, 0, 'f', 2));
+        out(QStringLiteral("  angle %1° -> %2° (%3°/s), base %4 -> %5 %6, volume %7 -> %8 %9 (%10 %9/s)")
+                .arg(s.angleRelease, 0, 'f', 1).arg(s.angleEnd, 0, 'f', 1).arg(s.angleRate, 0, 'f', 3)
+                .arg(s.baseRelease, 0, 'f', 3).arg(s.baseEnd, 0, 'f', 3).arg(L)
+                .arg(s.volumeRelease, 0, 'f', 3).arg(s.volumeEnd, 0, 'f', 3).arg(V).arg(s.volumeRate, 0, 'g', 3));
+    }
+}
+
+bool savePlot(const QStringList& a, const ld::SeriesSet& set) {
+    const QString png = arg(a, "--plot");
+    if (png.isEmpty()) return true;
+    if (!ld::plotSeries(set).save(png)) {
+        out(QStringLiteral("cannot write ") + png);
+        return false;
+    }
+    out(QStringLiteral("plot: ") + png);
+    return true;
+}
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -32,7 +70,8 @@ int main(int argc, char** argv) {
         out(QStringLiteral("LibreDropCLI analyze IMAGE... [--scale PX_PER_MM --density KG_M3 --tension MN_M]\n"
                            "LibreDropCLI scene IMAGE... [same options]\n"
                            "LibreDropCLI video FILE|IMAGES... [same options] [--step N] [--start S] [--end S] [--fps F] "
-                           "[-o CSV] [--plot PNG]\n"
+                           "[-o CSV] [--plot PNG] [--drops 2,3]\n"
+                           "LibreDropCLI report TABLE.csv [--drops 2,3] [--plot PNG]\n"
                            "LibreDropCLI synth --theta DEG [--bond B] [--radius PX] [--tilt DEG] [--needle GAP_PX] -o FILE"));
         return a.isEmpty() ? 1 : 0;
     }
@@ -53,6 +92,22 @@ int main(int argc, char** argv) {
         }
         out(file);
         return 0;
+    }
+    if (a[0] == QLatin1String("report")) {   // summary and plot of chosen drops from a saved table
+        QFile f(a.value(1));
+        if (a.size() < 2 || !f.open(QIODevice::ReadOnly)) {
+            out(QStringLiteral("cannot read ") + a.value(1));
+            return 1;
+        }
+        ld::SeriesSet set;
+        QString err;
+        if (!ld::readTracksCsv(QString::fromUtf8(f.readAll()), &set, &err)) {
+            out(err);
+            return 1;
+        }
+        ld::selectDrops(&set, dropIds(a));
+        printSummaries(set);
+        return savePlot(a, set) ? 0 : 1;
     }
     if (a[0] == QLatin1String("video")) {
         ld::VideoOptions vo;
@@ -87,22 +142,9 @@ int main(int argc, char** argv) {
         out(QStringLiteral("%1 frames measured; surface y %2 px (tilt %3°, from %4 frames); %5 drops")
                 .arg(r.frames).arg(r.surface.p0.y, 0, 'f', 1).arg(r.surface.angle * 180 / M_PI, 0, 'f', 2)
                 .arg(r.surfaceFrames).arg(r.tracks.size()));
-        const QString L = u.lenUnit(), V = u.volUnit();
-        for (const ld::DropTrack& t : r.tracks) {
-            const ld::TrackSummary s = ld::summarize(t, u);
-            out(QStringLiteral("drop %1 at x %2 %3: touched at %4 s, %5 frames (%6 not measurable)")
-                    .arg(s.id).arg(s.x, 0, 'f', 2).arg(L).arg(s.tContact, 0, 'f', 2).arg(s.points).arg(s.failed));
-            if (s.tRelease < 0) {
-                out(QStringLiteral("  the needle stays in the drop"));
-                continue;
-            }
-            out(QStringLiteral("  free from %1 s (%2 s after contact) to %3 s")
-                    .arg(s.tRelease, 0, 'f', 2).arg(s.tRelease - s.tContact, 0, 'f', 2).arg(s.tEnd, 0, 'f', 2));
-            out(QStringLiteral("  angle %1° -> %2° (%3°/s), base %4 -> %5 %6, volume %7 -> %8 %9 (%10 %9/s)")
-                    .arg(s.angleRelease, 0, 'f', 1).arg(s.angleEnd, 0, 'f', 1).arg(s.angleRate, 0, 'f', 3)
-                    .arg(s.baseRelease, 0, 'f', 3).arg(s.baseEnd, 0, 'f', 3).arg(L)
-                    .arg(s.volumeRelease, 0, 'f', 3).arg(s.volumeEnd, 0, 'f', 3).arg(V).arg(s.volumeRate, 0, 'g', 3));
-        }
+        ld::SeriesSet set = ld::seriesOf(r, u);
+        ld::selectDrops(&set, dropIds(a));
+        printSummaries(set);
         const QString csv = arg(a, "-o");
         if (!csv.isEmpty()) {
             QFile f(csv);
@@ -110,17 +152,10 @@ int main(int argc, char** argv) {
                 out(QStringLiteral("cannot write ") + csv);
                 return 1;
             }
-            f.write(ld::tracksCsv(r, u).toUtf8());
+            f.write(ld::tracksCsv(r, u, dropIds(a)).toUtf8());
             out(QStringLiteral("table: ") + csv);
         }
-        const QString png = arg(a, "--plot");
-        if (!png.isEmpty()) {
-            if (!ld::plotTracks(r, u).save(png)) {
-                out(QStringLiteral("cannot write ") + png);
-                return 1;
-            }
-            out(QStringLiteral("plot: ") + png);
-        }
+        if (!savePlot(a, set)) return 1;
         return 0;
     }
     if (a[0] == QLatin1String("scene")) {

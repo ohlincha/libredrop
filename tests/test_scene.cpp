@@ -100,10 +100,24 @@ private slots:
         for (const DropTrack& t : r.tracks) QCOMPARE(int(t.points.size()), 8);
         QVERIFY(std::abs(angleOf(r.tracks[0].points.back().drop.a) - 40) < 2);
         QVERIFY(std::abs(angleOf(r.tracks[1].points.back().drop.a) - 100) < 3);
-        const TrackSummary s = summarize(r.tracks[0], Units{});
+        const SeriesSet set = seriesOf(r, Units{});
+        const TrackSummary s = summarize(set.drops[0]);
         QCOMPARE(s.points, 8);
         QVERIFY(std::abs(s.angleRate) < 1);
-        QVERIFY(tracksCsv(r, Units{}).count(QLatin1Char('\n')) == 1 + 16);
+        QVERIFY(std::abs(s.angleEnd - 40) < 2);
+        // the table read back gives the same summary; one drop picked out
+        const QString csv = tracksCsv(r, Units{});
+        QCOMPARE(csv.count(QLatin1Char('\n')), 1 + 16);
+        SeriesSet back;
+        QString err;
+        QVERIFY2(readTracksCsv(csv, &back, &err), qPrintable(err));
+        QCOMPARE(int(back.drops.size()), 2);
+        QCOMPARE(back.lenUnit, QStringLiteral("px"));
+        QVERIFY(std::abs(summarize(back.drops[0]).angleEnd - s.angleEnd) < 0.01);
+        selectDrops(&back, {2});
+        QCOMPARE(int(back.drops.size()), 1);
+        QCOMPARE(back.drops[0].id, 2);
+        QCOMPARE(tracksCsv(r, Units{}, {2}).count(QLatin1Char('\n')), 1 + 8);
     }
 };
 

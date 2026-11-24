@@ -633,7 +633,8 @@ DropAnalysis analyzeDrop(const GrayImage& im, const DropOptions& opt) {
 
     AngleResult hw;
     hw.method = QStringLiteral("height-width");
-    const AngleResult& base = tang.ok ? tang : circ;
+    // base: from the Young–Laplace fit (the whole outline, so steadier from frame to frame), else the tangents
+    const AngleResult& base = yl.r.ok ? yl.r : tang.ok ? tang : circ;
     if (base.ok) {
         const double D = base.contactR.x - base.contactL.x;
         a.baseWidthPx = D;

@@ -41,8 +41,6 @@ struct DropTrack {
     int id = 0;
     std::vector<TrackPoint> points;
     double tContact() const { return points.empty() ? 0 : points.front().t; }
-    // First frame after the needle has left the drop (the start of the free drop), or -1.
-    int released() const;
 };
 
 struct VideoOptions {

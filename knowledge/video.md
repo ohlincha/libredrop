@@ -37,9 +37,11 @@ baseline set by hand. Here nothing is set by hand.
 
 ## Open
 
-- Base width is noisy (+-0.1 mm frame to frame) while angle and volume are smooth: it comes from the
-  tangent/circle contact points; take it from where the outline meets the surface instead.
+- Base width now comes from the Young-Laplace fit (whole outline): frame-to-frame scatter 0.040 -> 0.006 mm
+  (water_glass_2, 25 s of a resting drop). Tangent contacts remain for the tangent method itself.
 - Contact angle while the needle is still in the drop is not meaningful (flagged, hollow markers in the plot).
 - Not yet tried: absorbing samples (separators), 640x480 at 120 fps, drops without a visible reflection (dark,
   rough or opaque samples need the dark-substrate baseline or a manual one).
-- A stain on the surface that looks like a flat drop is reported as a drop (tape, left).
+- A stain on the surface that looks like a flat drop is reported as a drop (tape, left). Decided (user): the
+  user picks the drops afterwards (`--drops`, `report TABLE --drops`; later by clicking in the GUI) rather than
+  guessing in code.
