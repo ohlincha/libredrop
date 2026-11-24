@@ -8,6 +8,7 @@
 #include <atomic>
 #include <memory>
 
+#include "core/project.h"
 #include "core/report.h"
 #include "core/video.h"
 
@@ -65,7 +66,12 @@ private:
     QLabel* timeLabel_ = nullptr;
     QTreeWidget* table_ = nullptr;
     QTreeWidget* soakTable_ = nullptr;
-    class CompareDialog* compare_ = nullptr;     // soaking: angle at fixed times, sorptivity, absorption
+    class CompareDialog* compare_ = nullptr;
+    class LibraryPanel* library_ = nullptr;
+    class QDockWidget* libraryDock_ = nullptr;
+    void newProject();
+    void applyProjectContext();          // a project recording was opened: its liquid, evaporation, scale
+    ld::Recording* currentRecording();   // the open file's entry in the project, if it is one     // soaking: angle at fixed times, sorptivity, absorption
     class QTabWidget* tabs_ = nullptr;
     class QLineEdit* soakTimes_ = nullptr;
     QDoubleSpinBox* evaporation_ = nullptr;
@@ -79,7 +85,8 @@ private:
     QSplitter* split_ = nullptr;   // frame | side panel
     void fitTableWidth();
 public:
-    void openCompare(const QStringList& files);   // File ▸ Compare samples (with these recordings added)
+    void openCompare(const QStringList& files, const QStringList& samples = {});   // Compare samples (with these added)
+    bool openProject(const QString& dir);
 private:                 // widen the side panel so every table column shows
     QLabel* checks_ = nullptr;
     QWidget* plotBox_ = nullptr;

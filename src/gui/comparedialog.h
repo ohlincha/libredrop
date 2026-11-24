@@ -15,8 +15,8 @@ class QTreeWidget;
 class QTreeWidgetItem;
 
 struct CompareSettings {
-    std::function<ld::VideoOptions(int frameWidth)> options;   // scale for that camera mode, liquid, step
-    std::function<ld::SoakOptions()> soak;                      // times, evaporation (current liquid)
+    std::function<ld::VideoOptions(int frameWidth, const QString& path)> options;   // scale, liquid, step for that recording
+    std::function<ld::SoakOptions(const QString& path)> soak;   // times, evaporation (for that recording)
     std::function<QString()> describe;                         // one line: liquid, evaporation, scale
 };
 
@@ -24,7 +24,7 @@ class CompareDialog : public QDialog {
     Q_OBJECT
 public:
     CompareDialog(CompareSettings settings, QWidget* parent = nullptr);
-    void addFiles(const QStringList& paths);
+    void addFiles(const QStringList& paths, const QStringList& samples = {});   // samples: names (else from file names)
 
 private:
     struct Drop {

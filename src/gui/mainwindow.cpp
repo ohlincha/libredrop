@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 
 #include "comparedialog.h"
+#include "library.h"
 
 #include <QAction>
 #include <QApplication>
@@ -36,6 +37,7 @@
 #include <QStatusBar>
 #include <QThreadPool>
 #include <QTimer>
+#include <QDockWidget>
 #include <QRegularExpression>
 #include <QLineEdit>
 #include <QTabWidget>
@@ -83,6 +85,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(&watcher_, &QFutureWatcher<ld::VideoResult>::finished, this, &MainWindow::analysisDone);
     QSettings st;
     restoreGeometry(st.value("window/geometry").toByteArray());
+    const QString last = st.value("project").toString();
+    if (!last.isEmpty() && QFileInfo::exists(last + QStringLiteral("/project.json"))) openProject(last);
 }
 
 MainWindow::~MainWindow() = default;
@@ -98,6 +102,20 @@ void MainWindow::buildUi() {
         ->setToolTip(tr("<p>Copy of the recording with only the band around the drops, in grey, as JPEG frames: typically "
                         "5–15× smaller, opens without ffmpeg, gives the same results.</p>"));
     file->addAction(tr("Compare &samples…"), this, [this] { openCompare({}); });
+    QMenu* proj = menuBar()->addMenu(tr("&Project"));
+    proj->addAction(tr("&New project…"), this, &MainWindow::newProject);
+    proj->addAction(tr("&Open project…"), this, [this] {
+        const QString d = QFileDialog::getExistingDirectory(this, tr("Open project folder"));
+        if (!d.isEmpty()) openProject(d);
+    });
+    proj->addAction(tr("&Add recordings…"), this, [this] {
+        if (!library_->hasProject()) {
+            QMessageBox::information(this, tr("Project"), tr("Open or make a project first (Project ▸ New project…)."));
+            return;
+        }
+        library_->addRecordings(QFileDialog::getOpenFileNames(this, tr("Add recordings"), QString(),
+                                                              tr("Videos (*.mkv *.avi *.mp4 *.mov);;All files (*)")));
+    });
     file->addSeparator();
     file->addAction(tr("&Quit"), QKeySequence::Quit, this, &QWidget::close);
     QMenu* help = menuBar()->addMenu(tr("&Help"));
@@ -280,6 +298,14 @@ void MainWindow::buildUi() {
     split->setStretchFactor(1, 2);
     split_ = split;
     setCentralWidget(split);
+    library_ = new LibraryPanel;
+    libraryDock_ = new QDockWidget(tr("Library"), this);
+    libraryDock_->setObjectName(QStringLiteral("library"));
+    libraryDock_->setWidget(library_);
+    addDockWidget(Qt::LeftDockWidgetArea, libraryDock_);
+    libraryDock_->hide();   // shown with a project
+    connect(library_, &LibraryPanel::openRecording, this, &MainWindow::openFile);
+    connect(library_, &LibraryPanel::compare, this, [this](const QStringList& p, const QStringList& n) { openCompare(p, n); });
     resize(1500, 900);
 
     frameTimer_ = new QTimer(this);
@@ -317,6 +343,17 @@ void MainWindow::buildUi() {
     connect(table_, &QTreeWidget::itemChanged, this, [this] {
         view_->setChosen(chosenIds());
         updatePlot();
+        if (ld::Recording* rec = currentRecording()) {   // remember the unticked drops in the project
+            QList<int> ex;
+            for (int i = 0; i < table_->topLevelItemCount(); ++i) {
+                QTreeWidgetItem* it = table_->topLevelItem(i);
+                if (!it->data(0, Qt::UserRole + 1).toBool() && it->checkState(0) != Qt::Checked) ex << it->data(0, Qt::UserRole).toInt();
+            }
+            if (ex != rec->excluded) {
+                rec->excluded = ex;
+                library_->save();
+            }
+        }
     });
     connect(table_, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem* it) {
         plot_->setHighlight(it ? it->data(0, Qt::UserRole).toInt() : -1);
@@ -357,20 +394,37 @@ void MainWindow::buildUi() {
     statusBar()->showMessage(tr("Open a recording to start."));
 }
 
-void MainWindow::openCompare(const QStringList& files) {
+void MainWindow::openCompare(const QStringList& files, const QStringList& samples) {
     {
         if (!compare_) {
             CompareSettings cs;
-            cs.options = [this](int w) {
+            cs.options = [this](int w, const QString& path) {
                 ld::VideoOptions o = options();
                 const ld::VideoOptions defaults;
                 o.minPoints = defaults.minPoints, o.minDuration = defaults.minDuration, o.step = step_->value();
                 const QVariant saved = QSettings().value(QStringLiteral("scaleFor/%1").arg(w));
                 o.scene.drop.pxPerMm = !saved.isNull() ? saved.toDouble() : defaultScale(w) > 0 ? defaultScale(w) : scale_->value();
+                if (const ld::Recording* r = library_->recordingFor(path)) {   // from the library: its liquid, calibration
+                    if (const ld::LiquidData* l = library_->project().liquid(r->liquid))
+                        o.scene.drop.densityDiff = l->density, o.scene.drop.surfaceTension = l->tension;
+                    const ld::Calibration c = library_->project().calibrationFor(w);
+                    if (std::isfinite(c.pxPerMm)) o.scene.drop.pxPerMm = c.pxPerMm;
+                }
                 return o;
             };
-            cs.soak = [this] { return soakOptions(); };
+            cs.soak = [this](const QString& path) {
+                ld::SoakOptions so = soakOptions();
+                if (const ld::Recording* r = library_->recordingFor(path)) {
+                    const ld::EvaporationRef e = library_->project().evaporationFor(r->liquid, r->date);
+                    so.evaporation = std::isfinite(e.rate) ? e.rate : 0;
+                }
+                return so;
+            };
             cs.describe = [this] {
+                if (library_->hasProject())
+                    return tr("Project <b>%1</b>: liquid, scale and evaporation correction come from the library for each "
+                              "recording (the glass reference of the same day, else the latest before it).")
+                        .arg(library_->project().name.toHtmlEscaped());
                 return tr("Liquid: <b>%1</b> · evaporation correction: %2 · scale: as set for each camera mode")
                     .arg(liquid_->currentText().toHtmlEscaped(),
                          evaporation_->value() > 0 ? tr("%1 µL/s").arg(evaporation_->value(), 0, 'f', 4)
@@ -382,8 +436,66 @@ void MainWindow::openCompare(const QStringList& files) {
         }
         compare_->show();
         compare_->raise();
-        if (!files.isEmpty()) compare_->addFiles(files);
+        if (!files.isEmpty()) compare_->addFiles(files, samples);
     }
+}
+
+bool MainWindow::openProject(const QString& dir) {
+    ld::Project p;
+    QString err;
+    if (!ld::Project::load(dir, &p, &err)) {
+        QMessageBox::warning(this, tr("Open project"), err);
+        return false;
+    }
+    library_->setProject(std::move(p));
+    libraryDock_->show();
+    QSettings().setValue("project", dir);
+    setWindowTitle(tr("LibreDrop — %1").arg(library_->project().name));
+    return true;
+}
+
+void MainWindow::newProject() {
+    const QString dir = QFileDialog::getSaveFileName(this, tr("New project: folder name"), QString(), QString(), nullptr,
+                                                     QFileDialog::ShowDirsOnly);
+    if (dir.isEmpty()) return;
+    ld::Project p;
+    QString err;
+    if (!ld::Project::create(dir, QFileInfo(dir).fileName(), &p, &err)) {
+        QMessageBox::warning(this, tr("New project"), err);
+        return;
+    }
+    openProject(dir);
+    statusBar()->showMessage(tr("Project made in %1. Add recordings with Project ▸ Add recordings… or the Add button.").arg(dir), 10000);
+}
+
+ld::Recording* MainWindow::currentRecording() {
+    return library_ && library_->hasProject() && !path_.isEmpty() ? library_->recordingFor(path_) : nullptr;
+}
+
+void MainWindow::applyProjectContext() {
+    const ld::Recording* rec = currentRecording();
+    if (!rec) return;
+    const ld::Project& pr = library_->project();
+    if (!rec->liquid.isEmpty()) {   // the liquid list entry with this name (or its abbreviation in brackets)
+        for (int i = 0; i < liquid_->count(); ++i) {
+            const QString t = liquid_->itemText(i);
+            if (t.compare(rec->liquid, Qt::CaseInsensitive) == 0 ||
+                t.contains(QStringLiteral("(%1)").arg(rec->liquid), Qt::CaseInsensitive)) {
+                liquid_->setCurrentIndex(i);
+                break;
+            }
+        }
+    }
+    if (const ld::LiquidData* l = pr.liquid(rec->liquid); l && std::isfinite(l->density) && std::isfinite(l->tension)) {
+        density_->setValue(l->density);
+        tension_->setValue(l->tension);
+    }
+    const ld::Calibration c = pr.calibrationFor(info_.w);
+    if (std::isfinite(c.pxPerMm)) scale_->setValue(c.pxPerMm);
+    const ld::EvaporationRef e = pr.evaporationFor(rec->liquid, rec->date);
+    evaporation_->setValue(std::isfinite(e.rate) ? e.rate : 0);
+    evaporationSource_ = std::isfinite(e.rate) ? tr("project: %1 on %2").arg(QFileInfo(e.recording).fileName(), e.date) : QString();
+    updateSoakHint();
 }
 
 void MainWindow::liquidChanged() {
@@ -459,6 +571,17 @@ void MainWindow::useAsGlassReference() {
     }
     evaporation_->setValue(e);
     evaporationSource_ = tr("from %1").arg(QFileInfo(path_).fileName());
+    if (ld::Recording* rec = currentRecording()) {   // in the project: for this liquid on this day
+        rec->glassReference = true;
+        ld::Project& pr = library_->project();
+        const QString liquid = rec->liquid.isEmpty() ? liquid_->currentText() : rec->liquid;
+        pr.evaporation.erase(std::remove_if(pr.evaporation.begin(), pr.evaporation.end(), [&](const ld::EvaporationRef& x) {
+            return x.liquid.compare(liquid, Qt::CaseInsensitive) == 0 && x.date == rec->date;
+        }), pr.evaporation.end());
+        pr.evaporation.push_back({liquid, rec->date, e, rec->file});
+        library_->save();
+        evaporationSource_ = tr("project: %1 on %2").arg(QFileInfo(rec->file).fileName(), rec->date);
+    }
     saveSettings();
     updateTable();
     statusBar()->showMessage(tr("Evaporation for %1 set to %2 µL/s.").arg(liquid_->currentText()).arg(e, 0, 'f', 4), 8000);
@@ -552,6 +675,7 @@ void MainWindow::openFile(const QString& path) {
     timeLabel_->setText(tr("%1 s  (frame %2)").arg(0.0, 0, 'f', 2).arg(0));
     analyseButton_->setEnabled(true);
     view_->resetView();
+    applyProjectContext();
     showFrame(0);
     analyse();
 }
@@ -621,6 +745,16 @@ void MainWindow::analysisDone() {
                                  .arg(result_.tracks.size())
                                  .arg(result_.surface.p0.y, 0, 'f', 1)
                                  .arg(result_.surface.angle * 180 / M_PI, 0, 'f', 2));
+    if (ld::Recording* rec = currentRecording()) {   // the library's ticks and the cached results
+        QSignalBlocker b(table_);
+        for (int i = 0; i < table_->topLevelItemCount(); ++i) {
+            QTreeWidgetItem* it = table_->topLevelItem(i);
+            if (rec->excluded.contains(it->data(0, Qt::UserRole).toInt()) && !it->data(0, Qt::UserRole + 1).toBool())
+                it->setCheckState(0, Qt::Unchecked);
+        }
+        QFile f(library_->project().resultPath(*rec));
+        if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) f.write(ld::tracksCsv(result_, resultUnits_).toUtf8());
+    }
     updateTable();
     updatePlot();
     // still at the start (often only the needle): show the first drop a second after it is free of the needle

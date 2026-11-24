@@ -127,14 +127,15 @@ QString CompareDialog::defaultSample(const QString& path) const {
     return b.isEmpty() ? QFileInfo(path).completeBaseName() : b;
 }
 
-void CompareDialog::addFiles(const QStringList& paths) {
-    for (const QString& p : paths) {
+void CompareDialog::addFiles(const QStringList& paths, const QStringList& samples) {
+    for (int i = 0; i < paths.size(); ++i) {
+        const QString& p = paths[i];
         bool have = false;
         for (const File& f : files_) have |= f.path == p;
         if (have) continue;
         File f;
         f.path = p;
-        f.sample = defaultSample(p);
+        f.sample = i < samples.size() && !samples[i].isEmpty() ? samples[i] : defaultSample(p);
         files_.push_back(f);
     }
     rebuild();
@@ -142,8 +143,7 @@ void CompareDialog::addFiles(const QStringList& paths) {
 
 void CompareDialog::analyseAll() {
     if (watcher_.isRunning()) return;
-    const ld::SoakOptions soakBase = settings_.soak();
-    times_ = soakBase.times;
+    times_ = settings_.soak(QString()).times;
     std::vector<int> todo;
     for (int i = 0; i < int(files_.size()); ++i)
         if (!files_[std::size_t(i)].done) todo.push_back(i);
@@ -153,19 +153,26 @@ void CompareDialog::analyseAll() {
     analyseButton_->setEnabled(false);
     QPointer<CompareDialog> self(this);
     const auto optionsFor = settings_.options;
-    std::vector<std::pair<int, QString>> jobs;
-    for (int i : todo) jobs.push_back({i, files_[std::size_t(i)].path});
+    struct Job {
+        int index;
+        QString path;
+        ld::SoakOptions soak;
+    };
+    std::vector<Job> jobs;
+    for (int i : todo) jobs.push_back({i, files_[std::size_t(i)].path, settings_.soak(files_[std::size_t(i)].path)});
     for (int i : todo) files_[std::size_t(i)].error = tr("waiting…");
     rebuild();
-    watcher_.setFuture(QtConcurrent::run([self, jobs, optionsFor, soakBase] {
-        for (const auto& [index, path] : jobs) {
+    watcher_.setFuture(QtConcurrent::run([self, jobs, optionsFor] {
+        for (const Job& job : jobs) {
+            const int index = job.index;
+            const QString& path = job.path;
             File f;
             f.path = path;
             const ld::VideoInfo info = ld::probeVideo(path);
             if (!info.error.isEmpty()) {
                 f.error = info.error;
             } else {
-                const ld::VideoOptions o = optionsFor(info.w);
+                const ld::VideoOptions o = optionsFor(info.w, path);
                 const ld::VideoResult r = ld::analyzeVideo(path, o, {});
                 if (!r.ok) {
                     f.error = r.error;
@@ -173,7 +180,7 @@ void CompareDialog::analyseAll() {
                     const ld::Units u{o.scene.drop.pxPerMm};
                     const ld::SeriesSet set = ld::seriesOf(r, u);
                     f.lenUnit = set.lenUnit;
-                    ld::SoakOptions so = soakBase;
+                    ld::SoakOptions so = job.soak;
                     so.videoEnd = r.info.times.empty() ? ld::kNaN : r.info.times.back();
                     for (const ld::DropSeries& d : set.drops) f.drops.push_back({d.id, ld::soak(d, so), ld::summarize(d)});
                 }
@@ -193,7 +200,7 @@ void CompareDialog::rebuild() {
     info_->setText(settings_.describe() +
                    tr("<br>Add the recordings of all samples (same liquid), then Analyse. Recordings with the same sample "
                       "name are averaged."));
-    if (times_.empty()) times_ = settings_.soak().times;
+    if (times_.empty()) times_ = settings_.soak(QString()).times;
     QString L = QStringLiteral("mm");
     for (const File& f : files_)
         if (!f.lenUnit.isEmpty()) L = f.lenUnit;
