@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QTabWidget>
 #include <QIcon>
+#include <QPalette>
 #include <QTimer>
 #include <QWheelEvent>
 
@@ -16,6 +17,29 @@ int main(int argc, char** argv) {
     QApplication::setApplicationName(QStringLiteral("LibreDrop"));
     QApplication::setApplicationVersion(QStringLiteral(LIBREDROP_VERSION));
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/icon.png")));
+    // a little colour, from the splash: the drop's blue as the accent, amber for what needs attention.
+    // Only tints and accents, so light and dark desktop themes both keep working.
+    {
+        QPalette pal = app.palette();
+        pal.setColor(QPalette::Highlight, QColor(0x2f7fd0));
+        pal.setColor(QPalette::HighlightedText, Qt::white);
+        pal.setColor(QPalette::Link, QColor(0x2f7fd0));
+        app.setPalette(pal);
+        app.setStyleSheet(QStringLiteral(
+            "QGroupBox { font-weight: 600; }"
+            "QGroupBox::title { color: #2f7fd0; }"
+            "QGroupBox > QWidget { font-weight: normal; }"
+            "QPushButton#analyse { background: #2f7fd0; color: white; border: 1px solid #2869b0; border-radius: 4px;"
+            "  padding: 5px 14px; font-weight: 600; }"
+            "QPushButton#analyse:hover { background: #3a8be0; }"
+            "QPushButton#analyse:pressed { background: #2869b0; }"
+            "QPushButton#analyse:disabled { background: rgba(47,127,208,90); border-color: rgba(47,127,208,90); }"
+            "QHeaderView::section { background: rgba(47,127,208,24); border: none;"
+            "  border-right: 1px solid rgba(47,127,208,40); border-bottom: 1px solid rgba(47,127,208,110); padding: 3px 6px; }"
+            "QLabel#soakHint { border-radius: 4px; padding: 6px 8px; }"
+            "QLabel#soakHint[state=\"todo\"] { background: rgba(255,209,102,70); border-left: 3px solid #e0a800; }"
+            "QLabel#soakHint[state=\"ok\"] { background: rgba(47,127,208,26); border-left: 3px solid #2f7fd0; }"));
+    }
     // testing: LIBREDROP_SPLASH_PNG=file.png saves the splash artwork and quits
     if (qEnvironmentVariableIsSet("LIBREDROP_SPLASH_PNG"))
         return drawSplash(2.0).save(qEnvironmentVariable("LIBREDROP_SPLASH_PNG")) ? 0 : 1;

@@ -182,6 +182,7 @@ void MainWindow::buildUi() {
     evaporation_->setToolTip(tr("<p>Volume lost by evaporation, measured with the same liquid on a non-absorbing surface "
                                 "(glass): added back before the sorptivity is fitted.</p>"));
     analyseButton_ = new QPushButton(tr("Analyse"));
+    analyseButton_->setObjectName(QStringLiteral("analyse"));
     analyseButton_->setEnabled(false);
     progress_ = new QProgressBar;
     progress_->setVisible(false);
@@ -234,6 +235,7 @@ void MainWindow::buildUi() {
     tabs_ = new QTabWidget;
     tabs_->addTab(table_, tr("Shape"));
     soakHint_ = new QLabel;
+    soakHint_->setObjectName(QStringLiteral("soakHint"));
     soakHint_->setWordWrap(true);
     soakHint_->setTextFormat(Qt::RichText);
     glassRef_ = new QPushButton(tr("Use as glass reference"));
@@ -388,6 +390,9 @@ void MainWindow::updateSoakHint() {
                 .arg(evaporationSource_.isEmpty() ? QString() : tr(" (%1)").arg(evaporationSource_.toHtmlEscaped()));
     }
     soakHint_->setText(t);
+    soakHint_->setProperty("state", evaporation_->value() <= 0 ? "todo" : "ok");
+    soakHint_->style()->unpolish(soakHint_);   // (re-apply the style sheet for the new state)
+    soakHint_->style()->polish(soakHint_);
     glassRef_->setEnabled(haveResult_ && !isImage_);
 }
 
