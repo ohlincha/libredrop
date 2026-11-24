@@ -1,4 +1,4 @@
-// LibreDrop: graphical program.  LibreDrop [FILE]
+// LibreDrop: graphical program.  LibreDrop [FILE | --example]
 #include <QApplication>
 #include <QIcon>
 #include <QTimer>
@@ -14,7 +14,8 @@ int main(int argc, char** argv) {
     MainWindow w;
     w.show();
     const QStringList args = app.arguments();
-    if (args.size() > 1) w.openFile(args[1]);
+    if (args.size() > 1 && args[1] == QLatin1String("--example")) w.openExample();
+    else if (args.size() > 1) w.openFile(args[1]);
     // testing: LIBREDROP_SHOT=file.png[,seconds] saves a screenshot of the window after that time and quits
     const QString shot = qEnvironmentVariable("LIBREDROP_SHOT");
     if (!shot.isEmpty()) {

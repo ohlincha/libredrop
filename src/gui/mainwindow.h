@@ -28,6 +28,7 @@ public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow() override;
     void openFile(const QString& path);
+    void openExample();   // the built-in recording (water on glass)
 
 protected:
     void closeEvent(QCloseEvent* e) override;

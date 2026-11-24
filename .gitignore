@@ -4,3 +4,4 @@ build/
 !docs/*.png
 !tests/data/*.png
 !resources/*.png
+!examples/*.mkv

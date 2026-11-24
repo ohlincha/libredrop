@@ -24,6 +24,8 @@
 #include <QScrollArea>
 #include <QPushButton>
 #include <QSettings>
+#include <QStandardPaths>
+#include <QDir>
 #include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
@@ -86,6 +88,8 @@ void MainWindow::buildUi() {
     file->addSeparator();
     file->addAction(tr("&Quit"), QKeySequence::Quit, this, &QWidget::close);
     QMenu* help = menuBar()->addMenu(tr("&Help"));
+    help->addAction(tr("Open &example (water on glass)"), this, &MainWindow::openExample);
+    help->addSeparator();
     help->addAction(tr("&About LibreDrop"), this, [this] {
         QMessageBox::about(this, tr("About LibreDrop"),
                            tr("<b>LibreDrop %1</b><p>Contact angle and drop shape from backlit side views: the surface "
@@ -262,6 +266,23 @@ void MainWindow::saveSettings() const {
     st.setValue("scale", scale_->value());
     st.setValue("step", step_->value());
     if (sinceContact_) st.setValue("sinceContact", sinceContact_->isChecked());
+}
+
+void MainWindow::openExample() {
+    // the example is built in; ffmpeg needs a file, so it is copied out
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    QDir().mkpath(dir);
+    const QString f = QDir(dir).filePath(QStringLiteral("water_on_glass.mkv"));
+    QFile::setPermissions(f, QFile::ReadOwner | QFile::WriteOwner);
+    QFile::remove(f);
+    if (!QFile::copy(QStringLiteral(":/examples/water_on_glass.mkv"), f)) {
+        QMessageBox::warning(this, tr("Example"), tr("Cannot write %1").arg(f));
+        return;
+    }
+    QFile::setPermissions(f, QFile::ReadOwner | QFile::WriteOwner);
+    liquid_->setCurrentIndex(0);   // water
+    scale_->setValue(94.23);
+    openFile(f);
 }
 
 void MainWindow::open() {
