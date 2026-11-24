@@ -1,11 +1,15 @@
 #pragma once
 // Tables, summaries and plots of drops over time (video results).
+#include <QColor>
 #include <QImage>
+#include <QRect>
 #include <QList>
 #include <QString>
 #include <vector>
 
 #include "video.h"
+
+class QPainter;
 
 namespace ld {
 
@@ -60,7 +64,22 @@ struct TrackSummary {
 };
 TrackSummary summarize(const DropSeries& d);
 
-// Angle, base width and volume against time since contact, one colour per drop.
+// Angle, base width and volume against time, one colour per drop (the same colour for a drop id everywhere).
+QColor dropColor(int id);
+struct PlotStyle {
+    bool sinceContact = true;          // x = time since each drop's contact; else the video's time
+    double cursor = kNaN;              // a dashed line at this x
+    double tMin = kNaN, tMax = kNaN;   // x range (else from the data)
+    int highlight = -1;                // drawn thicker
+    bool legend = true;
+    int fontPx = 14;
+    QColor background = Qt::white, text = Qt::black, grid = QColor(0xeeeeee);
+};
+struct PlotGeometry {
+    QRect boxes[3];                    // angle, base, volume panels
+    double t0 = 0, t1 = 1;             // x range of the panels
+};
+PlotGeometry drawSeries(QPainter& p, const QRect& area, const SeriesSet& s, const PlotStyle& style);
 QImage plotSeries(const SeriesSet& s, int width = 1200, int height = 900);
 
 }  // namespace ld

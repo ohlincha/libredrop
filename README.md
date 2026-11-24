@@ -7,7 +7,8 @@ comes first.
 
 **Status: early development.** The analysis works on synthetic drops of known angle and on the first real
 recordings from an Ossila goniometer (water on glass and tape, 17–90°), whole frames and whole videos, from the
-command line. No graphical program yet; not yet tried on absorbing samples (separators).
+command line and in a first graphical program. Not yet tried on absorbing samples (separators); no live camera
+yet.
 
 - Contact angle by Young–Laplace fit (with gravity; also gives the Bond number), tangent (left and right
   separately), circle, ellipse and height–width methods.
@@ -25,7 +26,12 @@ command line. No graphical program yet; not yet tried on absorbing samples (sepa
   (needs ffmpeg; `--drops 2,3` keeps only those drops), `report table.csv --drops 2,3 --plot plot.png` (summary and
   plot again from a saved table, e.g. to leave out a stain), `synth` (test drops).
 
-Planned: graphical program with live camera, absorption models for separators, camera control, pendant-drop surface tension, surface free energy for non-absorbing samples.
+- `LibreDrop [FILE]`: the graphical program. Open (or drop) a video or image; it is analysed in the background.
+  Step through the frames with the surface, each drop's outline, contact points, tangents and angle drawn on
+  them; tick the drops that count; angle, base width and volume against time with a cursor (click the plot to
+  jump there); export the table and the plot. Scale and liquid (water, DMC, DEC, PC or custom) are remembered.
+
+Planned: live camera and recording in the program, absorption models for separators, camera control, pendant-drop surface tension, surface free energy for non-absorbing samples.
 
 Build: C++17, Qt 6 (Core, Gui), Eigen 3.4+, CMake 3.21+.
 

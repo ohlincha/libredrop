@@ -199,6 +199,30 @@ bool readFrames(const QString& path, const VideoInfo& info, int step, int first,
     return true;
 }
 
+bool readFrameAt(const QString& path, const VideoInfo& info, int index, GrayImage* out, QString* error) {
+    if (index < 0 || index >= int(info.times.size())) {
+        *error = QStringLiteral("no frame %1").arg(index);
+        return false;
+    }
+    // seek a little before the frame's time, then take the first frame at or after it
+    const double t = info.times[std::size_t(index)] - info.times[0];
+    QByteArray raw;
+    if (!run(ffmpegProgram(),
+             {"-v", "error", "-ss", QString::number(std::max(0.0, t - 0.002), 'f', 4), "-i", path, "-frames:v", "1", "-f",
+              "rawvideo", "-pix_fmt", "gray", "-"},
+             &raw, error))
+        return false;
+    if (raw.size() < qint64(info.w) * info.h) {
+        *error = QStringLiteral("frame %1 not decoded").arg(index);
+        return false;
+    }
+    GrayImage im(info.w, info.h);
+    const auto* src = reinterpret_cast<const unsigned char*>(raw.constData());
+    for (std::size_t i = 0; i < im.px.size(); ++i) im.px[i] = src[i];
+    *out = std::move(im);
+    return true;
+}
+
 VideoResult analyzeVideo(const QString& path, const VideoOptions& opt, const Progress& progress) {
     VideoResult r;
     const VideoInfo info = probeVideo(path);
@@ -223,9 +247,13 @@ VideoResult analyzeVideo(const QString& path, const VideoOptions& opt, const Pro
             so.surface.reset();
             const Scene s = analyzeScene(im, so);
             if (s.ok && !s.drops.empty()) found.push_back(s.surface);
-            return true;
+            return !(opt.cancel && *opt.cancel);
         }, &err)) {
         r.error = err;
+        return r;
+    }
+    if (opt.cancel && *opt.cancel) {
+        r.error = QStringLiteral("cancelled");
         return r;
     }
     const std::optional<Baseline> surface = opt.scene.surface ? opt.scene.surface : combineSurfaces(found);
@@ -242,12 +270,17 @@ VideoResult analyzeVideo(const QString& path, const VideoOptions& opt, const Pro
             Scene s = analyzeScene(im, so);
             frames.push_back({idx, info.times[std::size_t(idx)] - info.times[0], std::move(s.drops)});
             if (progress) progress(int(frames.size()), total);
-            return true;
+            return !(opt.cancel && *opt.cancel);
         }, &err)) {
         r.error = err;
         return r;
     }
+    if (opt.cancel && *opt.cancel) {
+        r.error = QStringLiteral("cancelled");
+        return r;
+    }
     r = track(std::move(frames), opt);
+    r.info = info;
     r.surface = *surface;
     r.surfaceFrames = int(found.size());
     return r;

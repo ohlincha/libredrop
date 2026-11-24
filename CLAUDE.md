@@ -10,5 +10,8 @@ The camera (UVC, `../ossila/goniometer_capture.py`) is at work on beryllium, not
 something is untested on real images.
 
 - Build/test: `cmake -S . -B ~/opt/build-libredrop && cmake --build ~/opt/build-libredrop && ctest --test-dir ~/opt/build-libredrop`
-- `LibreDropCLI synth ...` makes test drops of known angle; `LibreDropCLI analyze IMAGE` prints all methods and checks.
+- `LibreDropCLI synth ...` makes test drops of known angle; `LibreDropCLI analyze IMAGE` prints all methods and checks;
+  `scene`, `video`, `report` for whole frames, videos and saved tables (knowledge/video.md).
+- GUI (`src/gui`, binary `LibreDrop`): check it without a display: `QT_QPA_PLATFORM=offscreen
+  LIBREDROP_SHOT=out.png,SECONDS LibreDrop FILE` saves a screenshot after SECONDS and quits.
 - Keep tests green; every method change is checked against synthetic drops (tests/test_drop.cpp).

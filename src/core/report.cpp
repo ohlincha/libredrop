@@ -196,39 +196,50 @@ TrackSummary summarize(const DropSeries& d) {
     return s;
 }
 
-QImage plotSeries(const SeriesSet& r, int W, int H) {
-    QImage img(W, H, QImage::Format_RGB32);
-    img.fill(Qt::white);
-    QPainter p(&img);
+QColor dropColor(int id) {
+    static const QColor colors[] = {QColor(0x1f77b4), QColor(0xd62728), QColor(0x2ca02c), QColor(0x9467bd),
+                                    QColor(0xff7f0e), QColor(0x8c564b), QColor(0xe377c2), QColor(0x17becf)};
+    return colors[std::size_t(std::max(0, id - 1)) % 8];
+}
+
+PlotGeometry drawSeries(QPainter& p, const QRect& area, const SeriesSet& r, const PlotStyle& st) {
+    PlotGeometry g;
+    p.save();
     p.setRenderHint(QPainter::Antialiasing);
-    const QColor colors[] = {QColor(0x1f77b4), QColor(0xd62728), QColor(0x2ca02c), QColor(0x9467bd), QColor(0xff7f0e),
-                             QColor(0x8c564b), QColor(0xe377c2), QColor(0x17becf)};
+    p.fillRect(area, st.background);
     struct Panel {
         QString title;
         std::vector<double> DropSeries::*v;
     };
     const Panel panels[] = {
-        {QStringLiteral("contact angle (deg)"), &DropSeries::angle},
+        {QStringLiteral("contact angle (°)"), &DropSeries::angle},
         {QStringLiteral("base width (%1)").arg(r.lenUnit), &DropSeries::base},
         {QStringLiteral("volume (%1)").arg(r.volUnit == QLatin1String("uL") ? QStringLiteral("µL") : r.volUnit), &DropSeries::volume},
     };
-    double tMax = 0;
-    for (const DropSeries& t : r.drops)
-        if (!t.t.empty()) tMax = std::max(tMax, t.t.back() - t.tContact());
-    if (tMax <= 0) tMax = 1;
-    const double tStep = niceStep(tMax, 6);
-    tMax = std::ceil(tMax / tStep - 1e-9) * tStep;
-    const int perRow = std::max(1, (W - 120) / 90);
-    const int legendRows = (int(r.drops.size()) + perRow - 1) / perRow;
-    const int left = 90, right = 20, top = 30 + 20 * legendRows, gap = 50, bottom = 50;
-    const int ph = (H - top - bottom - 2 * gap) / 3;
+    auto t0Of = [&](const DropSeries& d) { return st.sinceContact ? d.tContact() : 0.0; };
+    double tMin = 1e300, tMax = -1e300;
+    for (const DropSeries& d : r.drops)
+        if (!d.t.empty()) tMin = std::min(tMin, d.t.front() - t0Of(d)), tMax = std::max(tMax, d.t.back() - t0Of(d));
+    if (st.sinceContact || tMin > tMax) tMin = 0;
+    if (std::isfinite(st.tMin)) tMin = st.tMin;
+    if (std::isfinite(st.tMax)) tMax = st.tMax;
+    if (!(tMax > tMin)) tMax = tMin + 1;
+    const double tStep = niceStep(tMax - tMin, std::max(2, area.width() / 180));
+    if (!std::isfinite(st.tMax)) tMax = std::ceil(tMax / tStep - 1e-9) * tStep;
+    if (!std::isfinite(st.tMin)) tMin = std::floor(tMin / tStep + 1e-9) * tStep;
+    g.t0 = tMin, g.t1 = tMax;
     QFont font = p.font();
-    font.setPixelSize(14);
+    font.setPixelSize(st.fontPx);
     p.setFont(font);
+    const int lh = st.fontPx + 6;
+    const int perRow = std::max(1, (area.width() - 120) / (st.fontPx * 6 + 20));
+    const int legendRows = st.legend ? (int(r.drops.size()) + perRow - 1) / perRow : 0;
+    const int left = st.fontPx * 5, right = 16, top = 8 + lh * legendRows + lh, gap = lh * 2 + 4, bottom = lh * 2 + 6;
+    const int ph = std::max(20, (area.height() - top - bottom - 2 * gap) / 3);
     for (int k = 0; k < 3; ++k) {
-        const QRect box(left, top + k * (ph + gap), W - left - right, ph);
-        // range: 2nd–98th percentile of all values, padded
-        std::vector<double> all;
+        const QRect box(area.left() + left, area.top() + top + k * (ph + gap), area.width() - left - right, ph);
+        g.boxes[k] = box;
+        std::vector<double> all;   // range: 2nd–98th percentile of all values, padded
         for (const DropSeries& t : r.drops)
             for (double v : t.*panels[k].v)
                 if (std::isfinite(v)) all.push_back(v);
@@ -237,33 +248,32 @@ QImage plotSeries(const SeriesSet& r, int W, int H) {
             std::sort(all.begin(), all.end());
             lo = all[std::size_t(0.02 * double(all.size() - 1))], hi = all[std::size_t(0.98 * double(all.size() - 1))];
             const double pad = std::max(1e-9, 0.08 * (hi - lo) + (hi == lo ? std::abs(hi) * 0.1 + 1e-6 : 0));
-            lo -= pad, hi += pad;
-            lo = std::max(0.0, lo);   // angles, widths and volumes are positive
+            lo = std::max(0.0, lo - pad), hi += pad;   // angles, widths and volumes are positive
         }
-        p.setPen(QColor(0x999999));
+        p.setPen(st.grid.darker(140));
+        p.setBrush(Qt::NoBrush);
         p.drawRect(box);
-        p.setPen(Qt::black);
-        p.drawText(QRect(box.left(), box.top() - 24, box.width(), 20), Qt::AlignLeft | Qt::AlignVCenter, panels[k].title);
-        const double step = niceStep(hi - lo, 4);
+        p.setPen(st.text);
+        p.drawText(QRect(box.left(), box.top() - lh, box.width(), lh - 2), Qt::AlignLeft | Qt::AlignVCenter, panels[k].title);
+        const double step = niceStep(hi - lo, std::max(2, ph / 50));
         lo = std::floor(lo / step + 1e-9) * step, hi = std::ceil(hi / step - 1e-9) * step;
         for (double v = lo; v <= hi + 0.5 * step; v += step) {   // y ticks
             const int y = box.bottom() - int(std::lround(box.height() * (v - lo) / (hi - lo)));
-            p.setPen(QColor(0xeeeeee));
+            p.setPen(st.grid);
             if (v > lo + 0.5 * step && v < hi - 0.5 * step) p.drawLine(box.left() + 1, y, box.right() - 1, y);
-            p.setPen(Qt::black);
-            p.drawText(QRect(0, y - 10, left - 8, 20), Qt::AlignRight | Qt::AlignVCenter, QString::number(v, 'g', 4));
+            p.setPen(st.text);
+            p.drawText(QRect(area.left(), y - lh / 2, left - 6, lh), Qt::AlignRight | Qt::AlignVCenter, QString::number(v, 'g', 4));
         }
-        for (double t = 0; t <= tMax + 0.5 * tStep; t += tStep) {   // x ticks
-            const int x = box.left() + int(std::lround(box.width() * t / tMax));
-            p.drawText(QRect(x - 40, box.bottom() + 4, 80, 18), Qt::AlignCenter, QString::number(t, 'g', 4));
+        for (double t = std::ceil(tMin / tStep - 1e-9) * tStep; t <= tMax + 1e-9 * tStep; t += tStep) {   // x ticks
+            const int x = box.left() + int(std::lround(box.width() * (t - tMin) / (tMax - tMin)));
+            p.drawText(QRect(x - 40, box.bottom() + 2, 80, lh), Qt::AlignCenter, QString::number(t, 'g', 4));
         }
-        auto X = [&](double t) { return box.left() + box.width() * t / tMax; };
+        auto X = [&](double t) { return box.left() + box.width() * (t - tMin) / (tMax - tMin); };
         auto Y = [&](double v) { return box.bottom() - box.height() * (v - lo) / (hi - lo); };
-        p.setClipRect(box);
-        for (std::size_t ti = 0; ti < r.drops.size(); ++ti) {
-            const DropSeries& t = r.drops[ti];
+        p.setClipRect(box.adjusted(1, 1, 0, 0));
+        for (const DropSeries& t : r.drops) {
             const std::vector<double>& vals = t.*panels[k].v;
-            const QColor c = colors[ti % 8];
+            const QColor c = dropColor(t.id);
             QPainterPath path;
             bool pen = false;
             for (std::size_t i = 0; i < t.t.size(); ++i) {
@@ -272,7 +282,7 @@ QImage plotSeries(const SeriesSet& r, int W, int H) {
                     pen = false;
                     continue;
                 }
-                const QPointF pt(X(t.t[i] - t.tContact()), Y(v));
+                const QPointF pt(X(t.t[i] - t0Of(t)), Y(v));
                 if (pen) path.lineTo(pt);
                 else path.moveTo(pt);
                 pen = true;
@@ -282,22 +292,38 @@ QImage plotSeries(const SeriesSet& r, int W, int H) {
                     p.drawEllipse(pt, 2.5, 2.5);
                 }
             }
-            p.setPen(QPen(c, 1.6));
+            p.setPen(QPen(c, t.id == st.highlight ? 3.0 : 1.6));
             p.setBrush(Qt::NoBrush);
             p.drawPath(path);
         }
+        if (std::isfinite(st.cursor)) {
+            p.setPen(QPen(st.text, 1, Qt::DashLine));
+            p.drawLine(QPointF(X(st.cursor), box.top()), QPointF(X(st.cursor), box.bottom()));
+        }
         p.setClipping(false);
     }
-    p.setPen(Qt::black);
-    p.drawText(QRect(left, H - 24, W - left - right, 20), Qt::AlignCenter,
-               QStringLiteral("time since the drop touched the surface (s); hollow markers: needle still in the drop"));
-    for (std::size_t ti = 0; ti < r.drops.size(); ++ti) {   // legend
-        p.setPen(QPen(colors[ti % 8], 3));
-        const int x = left + 90 * int(ti % std::size_t(perRow)), y = 12 + 20 * int(ti / std::size_t(perRow));
+    p.setPen(st.text);
+    p.drawText(QRect(area.left() + left, area.bottom() - lh, area.width() - left - right, lh), Qt::AlignCenter,
+               st.sinceContact ? QStringLiteral("time since the drop touched the surface (s); hollow markers: needle still in the drop")
+                               : QStringLiteral("time (s); hollow markers: needle still in the drop"));
+    for (std::size_t ti = 0; st.legend && ti < r.drops.size(); ++ti) {
+        p.setPen(QPen(dropColor(r.drops[ti].id), 3));
+        const int x = area.left() + left + (st.fontPx * 6 + 20) * int(ti % std::size_t(perRow));
+        const int y = area.top() + 4 + lh / 2 + lh * int(ti / std::size_t(perRow));
         p.drawLine(x, y, x + 22, y);
-        p.setPen(Qt::black);
-        p.drawText(x + 28, y + 5, QStringLiteral("drop %1").arg(r.drops[ti].id));
+        p.setPen(st.text);
+        p.drawText(QRect(x + 28, y - lh / 2, st.fontPx * 6, lh), Qt::AlignLeft | Qt::AlignVCenter,
+                   QStringLiteral("drop %1").arg(r.drops[ti].id));
     }
+    p.restore();
+    return g;
+}
+
+QImage plotSeries(const SeriesSet& r, int W, int H) {
+    QImage img(W, H, QImage::Format_RGB32);
+    img.fill(Qt::white);
+    QPainter p(&img);
+    drawSeries(p, img.rect(), r, PlotStyle{});
     return img;
 }
 

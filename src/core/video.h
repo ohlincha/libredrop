@@ -12,6 +12,7 @@
 // is found before the drops are matched.
 #include <QString>
 #include <QStringList>
+#include <atomic>
 #include <functional>
 #include <limits>
 #include <vector>
@@ -30,6 +31,8 @@ VideoInfo probeVideo(const QString& path);
 // Calls f(frameIndex, image) for frames first, first+step, … up to last (inclusive); f returns false to stop.
 bool readFrames(const QString& path, const VideoInfo& info, int step, int first, int last,
                 const std::function<bool(int, const GrayImage&)>& f, QString* error);
+// One frame (seeks to its time).
+bool readFrameAt(const QString& path, const VideoInfo& info, int index, GrayImage* out, QString* error);
 
 struct TrackPoint {
     int frame = 0;
@@ -51,6 +54,7 @@ struct VideoOptions {
     int minPoints = 3;             // shorter tracks are noise
     double minDuration = 0.5;      // s
     double fps = 0;                // for image lists
+    const std::atomic<bool>* cancel = nullptr;   // set to stop early (the result then has error "cancelled")
 };
 
 struct VideoResult {
@@ -60,6 +64,7 @@ struct VideoResult {
     Baseline surface;
     int surfaceFrames = 0;         // frames the surface was found in (pass 1)
     std::vector<DropTrack> tracks;
+    VideoInfo info;                // the video's size and frame times (empty for image lists)
 };
 
 using Progress = std::function<void(int done, int total)>;
