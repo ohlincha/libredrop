@@ -20,3 +20,19 @@ Setup: backlight on; separator taped flat on a glass slide; camera 1-2 degrees a
 | 7 | 2-3 drops in Ossila's software with its results noted | for comparison |
 
 Three drops per condition; `--note "sample, side, direction, liquid, volume"`.
+
+## Results 2026-11-24 (beryllium, water on glass slide, 1080p30)
+
+Needle and stage are both fixed: drops are made by dispensing until the pendant drop touches the surface
+(gap ~1.6 mm gives ~1.3-1.5 uL); sliding the slide sideways frees the drop from the needle.
+
+| Video | Drop | Base | Height | Angle (cap) | Volume |
+|---|---|---|---|---|---|
+| water_glass_1_20261124_103100 | 1 | 2.93 mm | 0.37 mm | 28.5° (circle fit 28.8°) | 1.3 uL |
+| water_glass_1_20261124_103100 | 2 | 3.49 mm | 0.32 mm | 20.7° (21.3°) | 1.5 uL |
+| water_glass_2_20261124_103653 | final | 3.58 mm | 0.28 mm | 17.5° | 1.4 uL |
+
+Quick script (silhouette threshold, widest row = contact line), not LibreDrop: LibreDrop's baseline search
+expects a dark substrate on both sides, but here the glass top is a faint bright line and the drop's
+reflection sits below it. Next in LibreDrop: baseline from the drop/reflection contact points (widest points of
+the silhouette, where the outline has its corners). Videos stay on beryllium ~/goniometer (0.9 GB each).
