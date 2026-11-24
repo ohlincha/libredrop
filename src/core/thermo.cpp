@@ -219,7 +219,7 @@ std::vector<Device> devices() {
         return out;
     }
     const CFIndex count = CFSetGetCount(set);
-    std::vector<const void*> devs(std::size_t(count));
+    std::vector<const void*> devs(static_cast<std::size_t>(count));
     CFSetGetValues(set, devs.data());
     for (const void* v : devs) {
         auto d = static_cast<IOHIDDeviceRef>(const_cast<void*>(v));
