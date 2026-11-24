@@ -18,6 +18,8 @@ struct GrayImage {
     bool empty() const { return px.empty(); }
 };
 
+double percentile(const GrayImage& im, double q);   // grey level below which a fraction q of pixels lie
+GrayImage crop(const GrayImage& im, int x0, int y0, int w, int h);
 GrayImage gaussianBlur(const GrayImage& im, double sigma);
 GrayImage fromQImage(const QImage& im);    // luminance
 QImage toQImage(const GrayImage& im);

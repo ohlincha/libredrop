@@ -62,6 +62,7 @@ struct Check {
 struct DropOptions {
     double minHeightPx = 2.0;                  // outline points closer to the baseline are not fitted
     std::optional<Baseline> baseline;          // manual baseline
+    double dark = -1, background = -1;         // grey levels, when known from a larger view (else from this image)
     bool staticMeasurement = true;             // warn if the needle touches the drop
     // Known liquid and scale fix the Bond number from the apex radius (else it is fitted):
     double pxPerMm = 0, densityDiff = 0 /* kg/m³ */, surfaceTension = 0 /* mN/m */;

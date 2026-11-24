@@ -4,6 +4,7 @@
 |---|---|
 | [separators.md](separators.md) | What to measure on battery separators, and the checks that matter |
 | [methods.md](methods.md) | The contact-angle methods, how they are implemented and their verified accuracy |
-| [first-recordings.md](first-recordings.md) | Plan for the first real recordings (beryllium) |
+| [first-recordings.md](first-recordings.md) | First real recordings (beryllium): plan, hand results, video results |
+| [video.md](video.md) | Whole-frame and video analysis: how it works, results on the first videos, open issues |
 | [log.md](log.md) | Change log of this bundle |
 - [camera-scale.md](camera-scale.md): px/mm per video mode (calibration sphere)

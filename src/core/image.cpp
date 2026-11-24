@@ -8,6 +8,27 @@
 
 namespace ld {
 
+double percentile(const GrayImage& im, double q) {
+    std::vector<int> hist(256, 0);
+    for (float v : im.px) ++hist[std::size_t(std::clamp(int(v), 0, 255))];
+    const double target = q * double(im.px.size());
+    double acc = 0;
+    for (int i = 0; i < 256; ++i) {
+        acc += hist[std::size_t(i)];
+        if (acc >= target) return i + 0.5;
+    }
+    return 255;
+}
+
+GrayImage crop(const GrayImage& im, int x0, int y0, int w, int h) {
+    x0 = std::clamp(x0, 0, im.w), y0 = std::clamp(y0, 0, im.h);
+    w = std::clamp(w, 0, im.w - x0), h = std::clamp(h, 0, im.h - y0);
+    GrayImage out(w, h);
+    for (int y = 0; y < h; ++y)
+        std::copy_n(im.px.begin() + long(std::size_t(y0 + y) * im.w + x0), w, out.px.begin() + long(std::size_t(y) * w));
+    return out;
+}
+
 GrayImage gaussianBlur(const GrayImage& im, double sigma) {
     if (sigma <= 0.05 || im.empty()) return im;
     const int r = int(std::ceil(3 * sigma));
