@@ -10,6 +10,9 @@ recordings from an Ossila goniometer (water on glass and tape, 17–90°), whole
 command line and in the graphical program, which also records from the camera (Linux). Not yet tried on
 absorbing samples (separators).
 
+**User manual**: [docs/MANUAL.md](docs/MANUAL.md), printable as [docs/LibreDrop-Manual.pdf](docs/LibreDrop-Manual.pdf)
+(made by `tools/manual_pdf.sh`), and in the program under *Help ▸ Manual* (F1).
+
 - Contact angle by Young–Laplace fit (with gravity; also gives the Bond number), tangent (left and right
   separately), circle, ellipse and height–width methods.
 - Baseline from a dark substrate at the image sides, or, on a bright glass/film surface, from the corners where

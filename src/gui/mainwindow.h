@@ -3,6 +3,8 @@
 // found in it, choose the drops that count, and see their angle, base width and volume over time.
 #include <QFutureWatcher>
 #include <QMainWindow>
+#include <QDialog>
+#include <QPointer>
 #include <QSplitter>
 #include <QElapsedTimer>
 #include <QDateTime>
@@ -102,6 +104,7 @@ public:
     bool openProject(const QString& dir);
     void openMeasure();   // the live camera and recording
     void scaleFromNeedle();   // needle diameter → px/mm for this frame width
+    void openManual();        // Help ▸ Manual
 private:                 // widen the side panel so every table column shows
     QLabel* checks_ = nullptr;
     QWidget* plotBox_ = nullptr;
@@ -134,4 +137,5 @@ private:                 // widen the side panel so every table column shows
     int frameGeneration_ = 0;
     bool frameBusy_ = false;
     int pendingFrame_ = -1;
+    QPointer<QDialog> manual_;
 };

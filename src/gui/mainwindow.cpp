@@ -2,6 +2,7 @@
 
 #include "comparedialog.h"
 #include "library.h"
+#include "manualwindow.h"
 #include "measurewindow.h"
 #include "needle.h"
 #include "projectdialogs.h"
@@ -163,6 +164,7 @@ void MainWindow::buildUi() {
     file->addSeparator();
     file->addAction(tr("&Quit"), QKeySequence::Quit, this, &QWidget::close);
     QMenu* help = menuBar()->addMenu(tr("&Help"));
+    help->addAction(tr("&Manual"), QKeySequence::HelpContents, this, &MainWindow::openManual);
     help->addAction(tr("Open &example (water on glass)"), this, &MainWindow::openExample);
     help->addAction(tr("&Measuring separators…"), this, [this] {
         QMessageBox::information(this, tr("Measuring separators"), tr(
@@ -504,6 +506,13 @@ void MainWindow::openCompare(const QStringList& files, const QStringList& sample
         compare_->raise();
         if (!files.isEmpty()) compare_->addFiles(files, samples);
     }
+}
+
+void MainWindow::openManual() {
+    if (!manual_) manual_ = new ManualWindow(this);
+    manual_->show();
+    manual_->raise();
+    manual_->activateWindow();
 }
 
 void MainWindow::scaleFromNeedle() {

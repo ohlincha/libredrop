@@ -113,6 +113,8 @@ int main(int argc, char** argv) {
                         if (auto* b = t->findChild<QAbstractButton*>(QStringLiteral("record")); b && t->isVisible()) b->click();
                 });
         }
+        // LIBREDROP_SHOT_MANUAL=1: open Help ▸ Manual (screenshot that window)
+        if (qEnvironmentVariableIsSet("LIBREDROP_SHOT_MANUAL")) QTimer::singleShot(300, &w, [&w] { w.openManual(); });
         // LIBREDROP_SHOT_TAB=n: show that tab of the drop table
         const int tab = qEnvironmentVariableIntValue("LIBREDROP_SHOT_TAB");
         QTimer::singleShot(ms > 0 ? ms : 3000, &w, [&w, shot, tab] {
