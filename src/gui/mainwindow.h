@@ -103,12 +103,16 @@ public:
     void openCompare(const QStringList& files, const QStringList& samples = {});   // Compare samples (with these added)
     bool openProject(const QString& dir);
     void openMeasure();   // the live camera and recording
-    void scaleFromNeedle();   // needle diameter → px/mm for this frame width
+    void scaleFromNeedle();   // the open recording's needle (measured) / the needle diameter -> scale
     void openManual();        // Help ▸ Manual
 private:                 // widen the side panel so every table column shows
     QLabel* checks_ = nullptr;
     QWidget* plotBox_ = nullptr;
     QDoubleSpinBox* scale_ = nullptr;
+    QDoubleSpinBox* needle_ = nullptr;     // needle outer diameter (mm); 0: scale entered by hand
+    QLabel* scaleSource_ = nullptr;        // where the scale comes from
+    void setScaleSource(const QString& text);
+    double needlePx_ = 0;                  // the needle's width in the open recording (0: not found)
     QComboBox* liquid_ = nullptr;
     QDoubleSpinBox* density_ = nullptr;
     QDoubleSpinBox* tension_ = nullptr;

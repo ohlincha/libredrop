@@ -223,13 +223,23 @@ MeasureWindow::MeasureWindow(MeasureContext ctx, QWidget* parent) : QWidget(pare
     camForm->addRow(tr("Size and rate"), mode_);
     camForm->addRow(tr("Exposure"), exposure_);
     scaleLabel_ = new QLabel;
-    auto* needleButton = new QPushButton(tr("From needle…"));
-    needleButton->setToolTip(tr("<p>Scale from the needle in the live image: enter its outer diameter (measured with a "
-                                "micrometer). Kept for this camera size; no project needed.</p>"));
-    connect(needleButton, &QPushButton::clicked, this, &MeasureWindow::scaleFromNeedle);
+    scaleLabel_->setWordWrap(true);
+    needle_ = new QDoubleSpinBox;
+    needle_->setRange(0, 5);
+    needle_->setDecimals(4);
+    needle_->setSingleStep(0.01);
+    needle_->setSuffix(tr(" mm"));
+    needle_->setSpecialValueText(tr("not used"));
+    needle_->setValue(needleDiameterMm());
+    needle_->setToolTip(tr("<p>The needle's outer diameter (measured once with a micrometer; the lab's needle: 0.4745 mm). "
+                           "The scale is measured from the needle in the live image and stored with each recording.</p>"));
+    connect(needle_, &QDoubleSpinBox::valueChanged, this, [this](double mm) {
+        setNeedleDiameterMm(mm);
+        showScale();
+    });
+    camForm->addRow(tr("Needle Ø"), needle_);
     auto* scRow = new QHBoxLayout;
     scRow->addWidget(scaleLabel_, 1);
-    scRow->addWidget(needleButton);
     camForm->addRow(tr("Scale"), scRow);
     camForm->addRow(live_);
 
@@ -508,7 +518,10 @@ void MeasureWindow::frameReady() {
     if (!thread_->takeLatest(&f)) return;
     const bool analyse = live_->isChecked();
     std::function<ld::SceneOptions(int)> opts = ctx_.sceneOptions;
-    preview_.setFuture(QtConcurrent::run([f = std::move(f), analyse, opts]() {
+    const double scale = liveScale();
+    const bool measureNeedle = needle_->value() > 0 && (!needleClock_.isValid() || needleClock_.elapsed() > 1000);
+    if (measureNeedle) needleClock_.start();
+    preview_.setFuture(QtConcurrent::run([f = std::move(f), analyse, opts, scale, measureNeedle]() {
         Preview p;
         p.image = QImage::fromData(f.jpeg, "JPEG").convertToFormat(QImage::Format_Grayscale8);
         if (p.image.isNull()) return p;
@@ -518,8 +531,10 @@ void MeasureWindow::frameReady() {
         for (int y = 0; y < g.h; y += 4)
             for (int x = 0; x < g.w; x += 4) s += g.at(x, y), ++n;
         p.mean = n ? s / n : 0;
+        if (measureNeedle && p.mean > 15) p.needlePx = needleWidthPx(g, g.h / 2);
         if (analyse && p.mean > 15) {
             ld::SceneOptions o = opts ? opts(g.w) : ld::SceneOptions{};
+            if (scale > 0) o.drop.pxPerMm = scale;
             o.drop.staticMeasurement = false;
             o.minHeightPx = std::max(o.minHeightPx, 0.015 * g.h);   // live: only drops that clearly stand up, not specks
             o.minWidthPx = std::max(o.minWidthPx, 0.03 * g.w);
@@ -536,9 +551,19 @@ void MeasureWindow::previewDone() {
         if (p.scene)
             for (std::size_t i = 0; i < p.scene->drops.size(); ++i) ids << int(i + 1);
         const bool newSize = p.image.size() != lastImage_.size();
+        if (newSize) needleSeen_.clear(), needlePx_ = 0;
         lastImage_ = p.image;
         view_->setFrame(p.image, p.scene, ids);
-        if (newSize) showScale();
+        if (std::isfinite(p.needlePx)) {   // the median of the last few measurements
+            needleSeen_.push_back(p.needlePx);
+            if (needleSeen_.size() > 5) needleSeen_.erase(needleSeen_.begin());
+            std::vector<double> v = needleSeen_;
+            std::nth_element(v.begin(), v.begin() + long(v.size() / 2), v.end());
+            needlePx_ = v[v.size() / 2];
+            showScale();
+        } else if (newSize) {
+            showScale();
+        }
         QStringList lines;
         if (thread_) lines << tr("%1 fps").arg(thread_->fps(), 0, 'f', 1);
         if (p.scene) {
@@ -594,6 +619,11 @@ void MeasureWindow::record() {
     meta[QStringLiteral("controls")] = thread_->cameraSettings();
     meta[QStringLiteral("note")] = note_->text();
     meta[QStringLiteral("pre_seconds")] = kPreSeconds;
+    if (const double sc = liveScale(); sc > 0) meta[QStringLiteral("px_per_mm")] = std::round(sc * 1000) / 1000;
+    if (needlePx_ > 0 && needle_->value() > 0) {
+        meta[QStringLiteral("needle_mm")] = needle_->value();
+        meta[QStringLiteral("needle_px")] = std::round(needlePx_ * 10) / 10;
+    }
     auto put = [&sample](const char* k, const QString& v) {
         if (!v.trimmed().isEmpty()) sample[QLatin1String(k)] = v.trimmed();
     };
@@ -695,18 +725,20 @@ void MeasureWindow::closeEvent(QCloseEvent* e) {
     e->accept();
 }
 
-void MeasureWindow::showScale() {
-    const double sc = ctx_.sceneOptions && !lastImage_.isNull() ? ctx_.sceneOptions(lastImage_.width()).drop.pxPerMm : 0;
-    scaleLabel_->setText(sc > 0 ? tr("%1 px/mm").arg(sc, 0, 'f', 2) : tr("not set"));
-    view_->setPxPerMm(sc);
+double MeasureWindow::liveScale() const {
+    if (needlePx_ > 0 && needle_->value() > 0) return needlePx_ / needle_->value();
+    return ctx_.sceneOptions && !lastImage_.isNull() ? ctx_.sceneOptions(lastImage_.width()).drop.pxPerMm : 0;
 }
 
-void MeasureWindow::scaleFromNeedle() {
-    if (lastImage_.isNull()) return;
-    double mm = 0;
-    const double sc = askNeedleScale(this, needleWidthPx(ld::fromQImage(lastImage_)), &mm);
-    if (!(sc > 0)) return;
-    QSettings().setValue(QStringLiteral("scaleFor/%1").arg(lastImage_.width()), sc);
-    if (ctx_.scaleSet) ctx_.scaleSet(lastImage_.width(), sc, mm);
-    showScale();
+void MeasureWindow::showScale() {
+    const double sc = liveScale();
+    if (needlePx_ > 0 && needle_->value() > 0) {
+        scaleLabel_->setText(tr("%1 px/mm from the needle (%2 px)").arg(sc, 0, 'f', 2).arg(needlePx_, 0, 'f', 1));
+        if (!lastImage_.isNull()) QSettings().setValue(QStringLiteral("scaleFor/%1").arg(lastImage_.width()), sc);
+    } else {
+        scaleLabel_->setText(sc > 0 ? tr("%1 px/mm (%2)").arg(sc, 0, 'f', 2).arg(needle_->value() > 0 ? tr("no needle in view yet")
+                                                                                                        : tr("kept or built-in"))
+                                    : tr("not set"));
+    }
+    view_->setPxPerMm(sc);
 }

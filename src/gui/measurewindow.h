@@ -3,7 +3,10 @@
 // press Record (or Ctrl+R) when the drop touches (the video starts 2 s earlier), Stop when it has settled. The
 // video and its .json go into the project's recordings/ (or a chosen folder), are added to the project, and the
 // main window opens and analyses them.
+#include <QElapsedTimer>
 #include <QFutureWatcher>
+#include <cmath>
+#include <vector>
 #include <QImage>
 #include <QDateTime>
 #include <QJsonObject>
@@ -80,7 +83,6 @@ struct MeasureContext {
     std::function<QStringList()> samples;                            // sample names in the project
     QStringList liquids;                                             // names for the liquid list
     std::function<void(const QString& path, bool open)> recorded;    // add to the project; open and analyse
-    std::function<void(int frameWidth, double pxPerMm, double needleMm)> scaleSet;   // from the needle
     std::function<bool(double* t, double* h, QString* sensor)> conditions;          // room °C, %RH (USB sensor)
 };
 
@@ -132,7 +134,11 @@ private:
     QLabel* readout_ = nullptr;
     QLabel* scaleLabel_ = nullptr;
     QImage lastImage_;                                    // the newest live frame shown (grey)
-    void scaleFromNeedle();
+    QDoubleSpinBox* needle_ = nullptr;                    // needle outer diameter (mm), shared with the main window
+    double needlePx_ = 0;                                 // the needle's width in the live image (median of the last few)
+    std::vector<double> needleSeen_;
+    QElapsedTimer needleClock_;
+    double liveScale() const;                             // px/mm from the needle, else the kept/built-in one
     void showScale();
 
     std::unique_ptr<ld::Camera> pending_;                 // opened, modes listed, not yet streaming
@@ -142,6 +148,7 @@ private:
         QImage image;
         std::optional<ld::Scene> scene;
         double mean = 0;
+        double needlePx = std::nan("");               // measured in this frame (about once a second)
     };
     QFutureWatcher<Preview> preview_;
     bool previewWanted_ = false;

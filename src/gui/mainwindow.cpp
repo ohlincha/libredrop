@@ -36,6 +36,7 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QDir>
+#include <cstdio>
 #include <QDate>
 #include <QScrollBar>
 #include <QSlider>
@@ -91,6 +92,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle(QStringLiteral("LibreDrop"));
     setAcceptDrops(true);
     buildUi();
+    QTimer::singleShot(0, this, &MainWindow::updateTable);   // the table as any later rebuild makes it; panel width
+    if (qEnvironmentVariableIsSet("LIBREDROP_DEBUG_PANEL")) split_->widget(1)->installEventFilter(this);   // testing
     connect(&watcher_, &QFutureWatcher<ld::VideoResult>::finished, this, &MainWindow::analysisDone);
     conditions_ = new QLabel;
     conditions_->setVisible(false);
@@ -135,8 +138,10 @@ void MainWindow::buildUi() {
         if (editLiquids(this, library_->project())) library_->save();
     });
     proj->addAction(tr("&Calibration…"), this, [this] {
-        if (!library_->hasProject()) {   // no project: the scale from the needle, kept per camera size
-            scaleFromNeedle();
+        if (!library_->hasProject()) {   // no project: the scale comes from the needle (Measurement)
+            QMessageBox::information(this, tr("Calibration"),
+                                     tr("The scale is set from the needle: enter its outer diameter under Measurement "
+                                        "(needle Ø); LibreDrop measures the needle in each recording."));
             return;
         }
         auto needle = [this]() -> double {   // the needle's width in the frame at the slider (above the surface)
@@ -257,14 +262,34 @@ void MainWindow::buildUi() {
     progress_->setVisible(false);
     auto* settings = new QGroupBox(tr("Measurement"));
     auto* form = new QFormLayout(settings);
-    auto* needleButton = new QPushButton(tr("From needle…"));
-    needleButton->setToolTip(tr("<p>Scale from the needle in the frame shown: enter its outer diameter (measured with a "
-                                "micrometer). Kept for this camera size.</p>"));
-    connect(needleButton, &QPushButton::clicked, this, &MainWindow::scaleFromNeedle);
+    needle_ = new QDoubleSpinBox;
+    needle_->setRange(0, 5);
+    needle_->setDecimals(4);
+    needle_->setSingleStep(0.01);
+    needle_->setSuffix(tr(" mm"));
+    needle_->setSpecialValueText(tr("not used"));
+    needle_->setValue(needleDiameterMm());
+    needle_->setToolTip(tr("<p>The needle's outer diameter (measured once with a micrometer; the lab's needle: 0.4745 mm). "
+                           "LibreDrop measures the needle's width in each recording and sets the scale from it. "
+                           "0: not used, enter the scale by hand.</p>"));
     auto* scaleRow = new QHBoxLayout;
     scaleRow->addWidget(scale_, 1);
-    scaleRow->addWidget(needleButton);
+    scaleRow->addWidget(new QLabel(tr("needle Ø")));
+    scaleRow->addWidget(needle_);
     form->addRow(tr("Scale"), scaleRow);
+    scaleSource_ = new QLabel;
+    scaleSource_->setStyleSheet(QStringLiteral("QLabel { color: palette(placeholder-text); }"));
+    scaleRow->setSpacing(6);
+    form->addRow(QString(), scaleSource_);
+    scaleSource_->setVisible(false);   // shown once there is something to say
+    connect(needle_, &QDoubleSpinBox::valueChanged, this, [this](double mm) {
+        setNeedleDiameterMm(mm);
+        if (needlePx_ > 0 && mm > 0) {
+            scale_->setValue(needlePx_ / mm);
+            setScaleSource(tr("from the needle: %1 px = %2 mm (Analyse to use it)").arg(needlePx_, 0, 'f', 1).arg(mm));
+        }
+    });
+    connect(scale_, &QDoubleSpinBox::editingFinished, this, [this] { setScaleSource(tr("entered by hand")); });
     connect(scale_, &QDoubleSpinBox::valueChanged, this, [this](double v) { view_->setPxPerMm(v); });
     form->addRow(tr("Liquid"), liquid_);
     auto* lt = new QHBoxLayout;
@@ -290,7 +315,10 @@ void MainWindow::buildUi() {
 
     table_ = new QTreeWidget;
     table_->setRootIsDecorated(false);
-    table_->setHeaderLabels({tr("Drop")});
+    // all the columns from the start, so that the panel has its width from the start (it used to widen when the
+    // first change rebuilt the table: changing the scale, clicking the header)
+    table_->setHeaderLabels({tr("Drop"), tr("Contact (s)"), QString(), tr("Angle (°)"), tr("Left (°)"), tr("Right (°)"),
+                             tr("Base (mm)"), tr("Height (mm)"), tr("Volume (µL)"), tr("Frames")});
     table_->setToolTip(tr("<p>Tick the drops that count: only those are plotted and exported.</p>"));
     table_->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
     table_->header()->setStretchLastSection(false);
@@ -515,31 +543,28 @@ void MainWindow::openManual() {
     manual_->activateWindow();
 }
 
+void MainWindow::setScaleSource(const QString& text) {
+    scaleSource_->setText(text);
+    scaleSource_->setVisible(!text.isEmpty());
+}
+
 void MainWindow::scaleFromNeedle() {
-    if (path_.isEmpty() || info_.w <= 0) {
-        QMessageBox::information(this, tr("Scale from the needle"),
-                                 tr("Open a recording with the needle in view first (or use From needle… in the Measure window)."));
+    needlePx_ = 0;
+    const double mm = needle_->value();
+    if (path_.isEmpty() || info_.w <= 0 || !(mm > 0)) return;
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    double px;
+    if (isImage_) px = needleWidthPx(ld::fromQImage(QImage(path_)), info_.h / 2);
+    else px = needleWidthInVideo(path_, info_);
+    QApplication::restoreOverrideCursor();
+    if (!std::isfinite(px)) {
+        setScaleSource(tr("no needle found in this recording: %1").arg(scaleSource_->text()));
         return;
     }
-    ld::GrayImage g;
-    QString err;
-    if (isImage_) g = ld::fromQImage(QImage(path_));
-    else if (!ld::readFrameAt(path_, info_, slider_->value(), &g, &err)) return;
-    double mm = 0;
-    const double sc = askNeedleScale(this, needleWidthPx(g, haveResult_ ? int(result_.surface.p0.y) - 5 : -1), &mm);
-    if (!(sc > 0)) return;
-    scale_->setValue(sc);
-    QSettings().setValue(QStringLiteral("scaleFor/%1").arg(info_.w), sc);
-    if (library_->hasProject()) {
-        ld::Calibration c;
-        c.frameWidth = info_.w, c.pxPerMm = sc, c.needleMm = mm;
-        c.date = QDate::currentDate().toString(Qt::ISODate);
-        c.method = tr("needle %1 px").arg(sc * mm, 0, 'f', 1);
-        library_->project().calibrations.push_back(c);
-        library_->save();
-    }
-    statusBar()->showMessage(tr("Scale %1 px/mm from the needle (%2 mm), kept for %3 px wide frames. Analyse again to use it.")
-                                 .arg(sc, 0, 'f', 2).arg(mm).arg(info_.w), 15000);
+    needlePx_ = px;
+    scale_->setValue(px / mm);
+    QSettings().setValue(QStringLiteral("scaleFor/%1").arg(info_.w), px / mm);
+    setScaleSource(tr("from the needle: %1 px = %2 mm").arg(px, 0, 'f', 1).arg(mm));
 }
 
 void MainWindow::openMeasure() {
@@ -584,17 +609,6 @@ void MainWindow::openMeasure() {
             *t = room_.temperature, *h = room_.humidity;
             *sensor = room_.name.isEmpty() ? room_.model : room_.name;
             return std::isfinite(room_.temperature);
-        };
-        c.scaleSet = [this](int w, double sc, double mm) {
-            if (info_.w == w) scale_->setValue(sc);
-            if (library_->hasProject()) {
-                ld::Calibration cal;
-                cal.frameWidth = w, cal.pxPerMm = sc, cal.needleMm = mm;
-                cal.date = QDate::currentDate().toString(Qt::ISODate);
-                cal.method = tr("needle %1 px").arg(sc * mm, 0, 'f', 1);
-                library_->project().calibrations.push_back(cal);
-                library_->save();
-            }
         };
         measure_ = new MeasureWindow(std::move(c), this);
         measure_->show();
@@ -662,7 +676,10 @@ void MainWindow::applyProjectContext() {
         tension_->setValue(l->tension);
     }
     const ld::Calibration c = pr.calibrationFor(info_.w);
-    if (std::isfinite(c.pxPerMm)) scale_->setValue(c.pxPerMm);
+    if (std::isfinite(c.pxPerMm) && !(needlePx_ > 0)) {   // the needle in the recording comes first
+        scale_->setValue(c.pxPerMm);
+        setScaleSource(tr("the project's calibration (%1)").arg(c.method));
+    }
     const ld::EvaporationRef e = pr.evaporationFor(rec->liquid, rec->date);
     evaporation_->setValue(std::isfinite(e.rate) ? e.rate : 0);
     evaporationSource_ = std::isfinite(e.rate) ? tr("project: %1 on %2").arg(QFileInfo(e.recording).fileName(), e.date) : QString();
@@ -884,8 +901,14 @@ void MainWindow::openFile(const QString& path) {
     setWindowTitle(QStringLiteral("%1 – LibreDrop").arg(QFileInfo(path).fileName()));
     const double sc = defaultScale(info_.w);
     // the scale kept for this frame width (from the needle or entered), else the built-in one for the Ossila camera
-    if (const QVariant kept = QSettings().value(QStringLiteral("scaleFor/%1").arg(info_.w)); !kept.isNull()) scale_->setValue(kept.toDouble());
-    else if (sc > 0) scale_->setValue(sc);
+    if (const QVariant kept = QSettings().value(QStringLiteral("scaleFor/%1").arg(info_.w)); !kept.isNull()) {
+        scale_->setValue(kept.toDouble());
+        setScaleSource(tr("as last used for %1 px wide frames").arg(info_.w));
+    } else if (sc > 0) {
+        scale_->setValue(sc);
+        setScaleSource(tr("built-in for the Ossila camera"));
+    }
+    scaleFromNeedle();   // the needle in this recording, when its diameter is set
     view_->setPxPerMm(scale_->value());
     slider_->blockSignals(true);
     slider_->setRange(0, std::max(0, int(info_.times.size()) - 1));
@@ -1127,7 +1150,8 @@ void MainWindow::fitTableWidth() {
     const int table = std::max(contents(table_), contents(soakTable_)) + 2 * table_->frameWidth() +
                       table_->verticalScrollBar()->sizeHint().width() + 8;   // + the tab page's margins
     const int around = side->width() - tabs_->width();                        // the panel's own margins
-    const int need = std::max(0, table + std::max(0, around));
+    // never narrower during a session: a rebuild with other units or no result must not make the panel jump
+    const int need = std::max({0, table + std::max(0, around), side->minimumWidth()});
     side->setMinimumWidth(need);
     if (!panelDragged_ && side->width() > need + 60) {   // give the rest to the image (until the user drags the divider)
         const int total = split_->sizes().value(0) + split_->sizes().value(1);
@@ -1136,6 +1160,8 @@ void MainWindow::fitTableWidth() {
 }
 
 bool MainWindow::eventFilter(QObject* o, QEvent* e) {
+    if (split_ && o == split_->widget(1) && e->type() == QEvent::Resize)   // LIBREDROP_DEBUG_PANEL
+        std::fprintf(stderr, "panel width %d (min %d)\n", split_->widget(1)->width(), split_->widget(1)->minimumWidth());
     if (o == soakHint_ && e->type() == QEvent::Resize)   // a wrapped label is not given its height by the tab widget
         soakHint_->setMinimumHeight(soakHint_->heightForWidth(soakHint_->width()));
     return QMainWindow::eventFilter(o, e);

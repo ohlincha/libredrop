@@ -46,15 +46,16 @@ The menus: **File** (measure, open, export, compare samples), **Project** (a fol
 
 Open **File ▸ Measure with the camera…** (Ctrl+M), or press **Measure…** in the main window.
 
-![The Measure window (here with the simulator as camera)](manual-measure.png)
+![The settings in the Measure window (here with the simulator as camera)](manual-measure.png)
 
 1. **Camera.** Choose the goniometer camera in the *Camera* list (press *Look again* if you plugged it in after
    opening the window). *Size and rate*: 640 × 480 (the camera says 120 fps; it delivers about 99) for liquids that soak in within a second or two,
    otherwise the larger size. The goniometer camera gets Ossila's settings; exposure 3.9 ms is right with the
    backlight on. If the image is too dark, raise the *Exposure*; the window warns about a black or white image.
-2. **Scale** (once per camera size). Lower the needle into view so it comes down from the top edge of the image,
-   press **From needle…** and enter the needle's **outer diameter**: the lab's needle is **0.4745 mm**. The
-   scale (px/mm) is remembered for that image size. Without a scale, sizes and volumes are in pixels.
+2. **Scale.** Enter the needle's **outer diameter** under *Needle Ø* (once; the lab's needle is **0.4745 mm**).
+   LibreDrop measures the needle's width in the live image whenever it comes down from the top edge and shows
+   the scale it gives (*Scale: … px/mm from the needle*); it is stored with each recording. When you open a
+   recording, the scale is measured from its needle again. Set *Needle Ø* to 0 to type a scale by hand instead.
 3. **Find drops in the live image** (tick box): shows the surface, the outline and the angle while you set up.
    Useful to check the focus and the stage before the drop goes on.
 4. **Sample details, before recording.** Fill in *Sample* (e.g. kraft-A), *Side*, *Direction* (MD or CD for paper),
@@ -104,8 +105,8 @@ For porous samples where the drop soaks in. Work in this order.
 
 **Before you start**
 
-1. **Scale**: *From needle…* in the Measure window with the needle in view (the lab's needle: 0.4745 mm outer
-   diameter), once per camera size.
+1. **Scale**: *Needle Ø* set to the needle's outer diameter (the lab's needle: 0.4745 mm); LibreDrop measures
+   the needle in every recording.
 2. **Liquid**: choose it in the main window; the same bottle for the whole series. Note the room temperature and
    humidity (LibreDrop stores them with each recording if a USB sensor is plugged in).
 3. **Sample**: cut a strip and mount it **flat**, for example taped to a glass slide at its ends, with a **straight,
@@ -133,7 +134,7 @@ small (below about 1 px for a clean edge); for the sorptivity, R² ≥ 0.9. Unti
 
 4. **Read the Soaking tab** for each recording:
 
-![The Soaking tab for a separator (simulated recording)](manual-soaking.png)
+![The Soaking tab (the post-it of section 7)](manual-soaking.png)
 
 | Column | Meaning |
 |---|---|
@@ -169,48 +170,55 @@ volume against time, or plot the per-frame CSV (*Export table*) in Origin, Excel
 
 | | Value |
 |---|---|
-| θ at 1 s / 10 s after contact | 100° / 90° |
-| Sorptivity S | 0.112 mm/√s (R² 0.93) |
-| Volume above the paper | 7.4 µL at contact, 2.0 µL after 70 s |
+| θ at 1 s / 10 s after contact | 101° / 91° |
+| Sorptivity S | 0.117 mm/√s (R² 0.93) |
+| Volume above the paper | about 9 µL at contact, about 2.5 µL after 70 s |
 | Absorption time | > 70 s (still there at the end of the recording) |
 | n | 1 drop (a report needs 3 or more) |
-| Scale | 94.23 px/mm (built-in; the needle gives 89.6 px/mm, so S would be about 5 % higher and volumes about 15 % larger) |
+| Scale | from the needle (0.4745 mm), about 90 px/mm |
 | Temperature, RH | not recorded (made before LibreDrop stored them) |
 | Evaporation correction | none (no glass reference that day) |
 
-The angle at 0.1 s (93°) is left out: the drop still wobbles just after landing, which the fit residual shows. A
+The angle at 0.1 s (94°) is left out: the drop still wobbles just after landing, which the fit residual shows. A
 proper report would give mean ± SD of three or more drops on fresh spots, with the glass reference applied.
 
 ## 7. Real examples (recorded without special care)
 
 These are recordings from the lab's goniometer, made quickly and without any preparation: no cleaning, no
-levelling, the sample just put on the stage. LibreDrop found the surface and the drops by itself in every frame.
+levelling, the sample just put on the stage. LibreDrop found the surface and the drops by itself in every frame,
+and the scale from the needle (about 90 px/mm).
 
 **Water on a glass slide.** The drop lands at 14.4 s and spreads: 53° at release, 36° after five seconds; the base
-grows from 4.4 to 5.0 mm. The surface is found from the drop's reflection in the glass.
+grows from 4.6 to 5.3 mm. The surface is found from the drop's reflection in the glass.
 
-![Water on glass: angle, base width and volume against time](manual-real-glass.png)
+![Water on glass: the drop with its fitted outline](manual-real-glass-drop.png)
+
+![Water on glass: the table and the angle, base width and volume against time](manual-real-glass.png)
 
 **Water on Scotch tape** (a single picture with three drops): 88° and 60° for the two drops, each measured on
 its own; the small one on the left is flagged as too small for an accurate angle.
 
-![Three drops of water on tape in one picture](manual-real-tape.png)
+![Three drops of water on tape in one picture](manual-real-tape-drop.png)
+
+![Their table](manual-real-tape.png)
 
 **Water on a 3M post-it** (paper: opaque, curled, with a raised fibrous ridge and a lifted edge — about the
 worst sample there is). There is no reflection, so the surface is the paper's own edge, and each drop gets its own
-baseline next to it. On the first drop the angle falls from 115° to 64° within 20 s as the paper takes the water up:
+baseline next to it. On the first drop the angle falls from 116° to 64° within 20 s as the paper takes the water
+up, and the base widens from 2.5 to 3.9 mm (the tangents, *Left* and *Right*, are unreliable on this frayed edge;
+use *Angle*):
 
-![A drop on a curled post-it](manual-real-postitA.png)
+![A drop on a curled post-it](manual-real-postitA-drop.png)
+
+![Its table and plot](manual-real-postitA.png)
 
 A second drop, recorded for 90 s, soaks in: the angle falls from 113° to about 30°, the base first spreads and
-then stays put, and the volume above the paper falls from 7.4 to 2.0 µL. The Soaking tab gives the angle at
-0.1, 1 and 10 s after contact and the sorptivity, 0.112 mm/√s (R² 0.93). (The picture shows a frame just after
-contact, while the drop still wobbles: the fit is rough there, 7.7 px.)
+then stays put, and the volume above the paper falls from about 9 to about 2.5 µL. The Soaking tab gives the angle
+at 0.1, 1 and 10 s after contact (94°, 101°, 91°) and the sorptivity, 0.117 mm/√s (R² 0.93).
 
-![The post-it soaking a drop: Soaking tab](manual-real-postitB.png)
+![The second post-it drop](manual-real-postitB-drop.png)
 
-The scale in these pictures is the built-in 94.23 px/mm; calibrated with the needle (0.4745 mm) it is 89.6 px/mm,
-so sizes and volumes would be about 5 % and 15 % larger. Angles do not depend on the scale.
+![Its Soaking tab and plot](manual-real-postitB.png)
 
 ## 8. Projects and comparing samples
 
@@ -225,7 +233,7 @@ time.
 of the ticked drops). The sample name comes from the file name without date, time and repeat number;
 double-click it to change it. *Export CSV…* writes every drop and the per-sample means.
 
-![Compare samples (simulated recordings)](manual-compare.png)
+![Compare samples: water on glass and two drops on the post-it (section 7), averaged per sample](manual-compare.png)
 
 ## 9. Practising with the simulator
 
@@ -258,7 +266,7 @@ The simulator draws every frame, which is slow on a busy computer. Choose the **
 | The camera runs slower than its rate | The exposure is longer than one frame: shorten it. The real frame times are recorded, so results are not affected. |
 | **"no drop on a surface"** / **"surface not found"** | The surface must be visible as a straight edge across the image (or, on glass, the drop's reflection). Check backlight and focus; mount the sample flat with a straight edge. |
 | Angle looks wrong | Step to the frame and look: does the outline follow the drop, is the dashed line on the surface? Read the checks below the table. Untick drops that are not real. |
-| Sizes in px, no volume | Set the scale (*From needle…*, 0.4745 mm for the lab's needle). |
+| Sizes in px, no volume | Enter *Needle Ø* (0.4745 mm for the lab's needle) with the needle in view, or type the scale. |
 | **"No needle found"** when setting the scale | The needle must come down from the top edge of the image; move to a frame where it does. |
 | Soaking tab: **no evaporation correction** | Record and analyse a drop on glass, then *Use as glass reference* (section 5). |
 | The table or plot is cut off | Drag the divider between the image and the right-hand panel (or between table and plot) to make it wider. |
