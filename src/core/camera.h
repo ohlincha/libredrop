@@ -3,23 +3,24 @@
 // goniometer's send Motion-JPEG), so recording copies them into the video without re-encoding and keeps up at
 // 120 fps; each frame carries the driver's capture time.
 //
-// Backends: V4L2 (Linux), the simulator ("synth:<scenario>", core/simulate.h), and a camera that replays a
+// Backends: V4L2 (Linux), ffmpeg (Windows: DirectShow, macOS: AVFoundation; any ffmpeg input as "ffmpeg:<format>:<input>"),
+// the simulator ("synth:<scenario>", core/simulate.h), and a camera that replays a
 // Motion-JPEG recording in real time ("sim:<file>";
-// the GUI offers the built-in example) for trying things out and testing without a camera. Windows and macOS have
-// only the simulated camera so far.
+// the GUI offers the built-in example) for trying things out and testing without a camera.
 //
 // The goniometer camera's settings as Ossila's software sets them (read from a USB capture, see
 // tools/goniometer_capture.py): manual exposure 3.9 ms, gain 0, brightness 0, contrast 32, hue 0, saturation 64,
 // sharpness 0, gamma 72, backlight compensation 2, auto white balance. applyOssilaSettings() sets these.
 #include <QByteArray>
 #include <QString>
+#include <QStringList>
 #include <memory>
 #include <vector>
 
 namespace ld {
 
 struct CameraInfo {
-    QString id;                    // /dev/videoN, or sim:<file>
+    QString id;                    // /dev/videoN, ffmpeg:<format>:<input>, synth:<scenario>, sim:<file>
     QString name;
 };
 
@@ -57,6 +58,9 @@ public:
 
     virtual std::vector<CameraControl> controls() const { return {}; }
     virtual bool setControl(const QString& name, int value) { (void)name, (void)value; return false; }
+    // The arguments for ffmpeg that open the camera driver's own settings dialog (Windows), or empty. The camera must
+    // not be in use meanwhile; the driver keeps what is set there.
+    virtual QStringList settingsDialogArgs() const { return {}; }
     // Ossila's settings with this exposure (in 100 µs units, as the camera counts it); false if not a UVC camera.
     bool applyOssilaSettings(int exposure100us);
     // The settings to store with a recording (name → value).

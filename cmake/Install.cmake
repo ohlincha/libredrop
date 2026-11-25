@@ -1,6 +1,7 @@
 # Installation and packages: Linux .deb (CPack), macOS app bundle, Windows folder (+ Inno Setup in CI).
 # Motion-JPEG recordings (the camera's format, and LibreDrop's compact copies) need no ffmpeg; for other video
-# formats ffmpeg is used if installed (recommended by the .deb; Windows/macOS: optional, see the README).
+# formats ffmpeg is needed: a dependency of the .deb, shipped with the Windows installer and the macOS app, where it
+# also drives the live camera (DirectShow, AVFoundation).
 include(GNUInstallDirs)
 
 if(LIBREDROP_GUI)
@@ -9,7 +10,8 @@ if(LIBREDROP_GUI)
     MACOSX_BUNDLE_BUNDLE_NAME LibreDrop
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
     MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
-    MACOSX_BUNDLE_ICON_FILE LibreDrop.icns)
+    MACOSX_BUNDLE_ICON_FILE LibreDrop.icns
+    MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/Info.plist.in)   # asks for the camera
   if(APPLE)
     configure_file(resources/icon.icns ${CMAKE_CURRENT_BINARY_DIR}/LibreDrop.icns COPYONLY)
     target_sources(libredrop-gui PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/LibreDrop.icns)
@@ -67,6 +69,7 @@ else()
   set(CPACK_DEBIAN_PACKAGE_SECTION science)
   set(CPACK_DEBIAN_PACKAGE_MAINTAINER "${CPACK_PACKAGE_CONTACT}")
   set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
-  set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "ffmpeg, qt6-wayland, python3-opencv, v4l-utils")
+  set(CPACK_DEBIAN_PACKAGE_DEPENDS "ffmpeg")   # added to the libraries' dependencies found by SHLIBDEPS
+  set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "qt6-wayland, python3-opencv, v4l-utils")
   include(CPack)
 endif()

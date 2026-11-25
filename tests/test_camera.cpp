@@ -1,5 +1,7 @@
 // Recording from the simulated camera: frames kept from before Record, times, the .json, reading back.
 #include <QFile>
+#include <QImage>
+#include <QProcess>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
@@ -8,10 +10,43 @@
 #include "core/camera.h"
 #include "core/mjpeg.h"
 #include "core/recorder.h"
+#include "core/video.h"
 
 class TestCamera : public QObject {
     Q_OBJECT
 private slots:
+    // The ffmpeg camera (Windows and macOS) with ffmpeg's test picture as the camera: whole JPEG frames, the
+    // frame times ffmpeg reports, and ffmpeg's error when the input is wrong.
+    void ffmpegCamera() {
+        QProcess probe;
+        probe.start(ld::ffmpegProgram(), {QStringLiteral("-version")});
+        if (!probe.waitForFinished(10000) || probe.exitCode() != 0) QSKIP("ffmpeg not installed");
+        QString err;
+        auto cam = ld::Camera::open(QStringLiteral("ffmpeg:lavfi:testsrc2=size=320x240:rate=50"), &err);
+        QVERIFY2(cam, qPrintable(err));
+        QCOMPARE(cam->modes().front().w, 320);
+        QVERIFY2(cam->start(cam->modes().front(), &err), qPrintable(err));
+        ld::CameraFrame f;
+        std::vector<double> t;
+        for (int i = 0; i < 25; ++i) {
+            QVERIFY2(cam->grab(&f, &err), qPrintable(err));
+            QVERIFY(f.jpeg.startsWith("\xff\xd8") && f.jpeg.endsWith("\xff\xd9"));
+            QCOMPARE(f.sequence, i);
+            t.push_back(f.t);
+        }
+        QImage im;
+        QVERIFY(im.loadFromData(f.jpeg, "JPG"));
+        QCOMPARE(im.size(), QSize(320, 240));
+        if (probe.readAll().contains("version 7") || t[1] - t[0] > 0.015)   // ffmpeg >= 6.1: its own frame times
+            for (std::size_t i = 1; i < t.size(); ++i) QVERIFY(std::abs(t[i] - t[i - 1] - 0.02) < 1e-3);
+        cam->stop();
+
+        auto bad = ld::Camera::open(QStringLiteral("ffmpeg:lavfi:nosuchsource"), &err);
+        QVERIFY(bad);
+        QVERIFY(!bad->start(bad->modes().front(), &err) || !bad->grab(&f, &err));
+        QVERIFY2(!err.isEmpty(), "no error message");
+    }
+
     void recordFromSimulated() {
         const QString example = QStringLiteral(TEST_DATA "/../../examples/water_on_glass.mkv");
         QString err;

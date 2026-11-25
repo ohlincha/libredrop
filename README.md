@@ -7,7 +7,7 @@ comes first.
 
 **Status: early development.** The analysis works on synthetic drops of known angle and on the first real
 recordings from an Ossila goniometer (water on glass and tape, 17–90°), whole frames and whole videos, from the
-command line and in the graphical program, which also records from the camera (Linux). Not yet tried on
+command line and in the graphical program, which also records from the camera (Linux, Windows, macOS). Not yet tried on
 absorbing samples (separators).
 
 **User manual**: [docs/MANUAL.md](docs/MANUAL.md), printable as [docs/LibreDrop-Manual.pdf](docs/LibreDrop-Manual.pdf)
@@ -48,7 +48,10 @@ and analysed.
   image is too dark. The window warns about a black image (backlight off, lens cap on).
 - Sizes and rates as the camera offers them. The goniometer camera says 120 fps at 640×480 but delivers about 99;
   the true frame times are recorded, so analysis is not affected.
-- Linux (V4L2) only for now; on Windows and macOS only the demo camera (the built-in example, replayed) is there.
+- Linux: V4L2, with the camera's settings set by LibreDrop. Windows (DirectShow) and macOS (AVFoundation): through
+  the bundled ffmpeg; Motion-JPEG is copied unchanged on Windows, re-encoded on macOS. The camera keeps its own
+  settings there (Windows: *Camera settings…* opens the driver's dialog). Not yet tried with the goniometer camera
+  on Windows or macOS.
 - `LibreDropCLI cameras` lists cameras, sizes and settings; `LibreDropCLI record OUT.mkv --size 640x480 --seconds 10
   --sample kraft-A --liquid DMC` records without the window.
 
@@ -113,9 +116,10 @@ Planned: live camera and recording in the program, camera control, surface tensi
 energy for non-absorbing samples.
 
 Install: Debian 13 / Ubuntu 24.04 `.deb`, Windows installer, macOS `.dmg` (Intel and Apple Silicon) from the
-releases page. The camera's recordings (Motion-JPEG) and LibreDrop's compact copies open directly; other video
-formats need ffmpeg (Linux: `apt install ffmpeg`; macOS: `brew install ffmpeg`; Windows: ffmpeg.exe and ffprobe.exe
-next to LibreDrop.exe or on PATH). File ▸ Save compact copy keeps the band around the drops in grey, 5–15× smaller. Help ▸ Open
+releases page. ffmpeg comes with it (a dependency of the .deb; inside the Windows installer and the macOS app:
+LGPL build from BtbN/FFmpeg-Builds on Windows, static builds from ffmpeg.martin-riedl.de on macOS, each with its
+license; sources at ffmpeg.org). It drives the camera on Windows and macOS and reads video formats other than
+Motion-JPEG. File ▸ Save compact copy keeps the band around the drops in grey, 5–15× smaller. Help ▸ Open
 example (or `LibreDrop --example`) shows a built-in recording, so no goniometer is needed to try it.
 
 Build: C++17, Qt 6 (Core, Gui, Widgets, Concurrent), Eigen 3.4+, CMake 3.21+.

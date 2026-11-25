@@ -16,6 +16,8 @@ namespace ld {
 
 namespace {
 
+}  // namespace
+
 // ffmpeg: LIBREDROP_FFMPEG, else next to the program (Windows installer, macOS bundle), else Homebrew's (apps
 // started from the Finder don't have it on PATH), else on PATH.
 QString ffmpegProgram() {
@@ -40,6 +42,8 @@ QString ffprobeProgram() {
     const int i = p.lastIndexOf(QLatin1String("ffmpeg"));
     return i >= 0 ? p.replace(i, 6, QStringLiteral("ffprobe")) : QStringLiteral("ffprobe");
 }
+
+namespace {
 
 bool run(const QString& program, const QStringList& args, QByteArray* out, QString* err) {
     QProcess p;

@@ -43,10 +43,10 @@ jobs:
           for f in build/libredrop_*.deb; do mv "$f" "dist/$(basename "${f%.deb}")_${{ matrix.tag }}.deb"; done
           dpkg-deb -I dist/*.deb
           dpkg-deb -c dist/*.deb
-      - name: Install with apt (without ffmpeg) and test
+      - name: Install with apt and test
         run: |
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ./dist/*.deb
-          ! command -v ffmpeg
+          command -v ffmpeg
           dpkg -s libredrop | grep -E '^(Version|Depends|Recommends):'
           for f in /usr/bin/LibreDrop /usr/bin/LibreDropCLI /usr/share/applications/io.github.ohlincha.libredrop.desktop \
                    /usr/share/icons/hicolor/256x256/apps/io.github.ohlincha.libredrop.png /usr/share/doc/libredrop/copyright; do
@@ -85,6 +85,13 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "windeployqt $exe failed" }
           }
           Copy-Item "$env:QT_ROOT_DIR\plugins\platforms\qoffscreen.dll" "$d\platforms\"
+          # ffmpeg (LGPL build, separate programs): the live camera (DirectShow) and video formats other than MJPEG
+          $z = "ffmpeg-n8.1-latest-win64-lgpl-8.1"
+          Invoke-WebRequest "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$z.zip" -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-dl
+          Copy-Item "ffmpeg-dl\$z\bin\ffmpeg.exe", "ffmpeg-dl\$z\bin\ffprobe.exe" $d
+          Copy-Item "ffmpeg-dl\$z\LICENSE.txt" "$d\ffmpeg-LICENSE.txt"
+          & "$d\ffmpeg.exe" -hide_banner -version | Select-Object -First 1
           Get-ChildItem -Recurse -File $d | ForEach-Object { $_.FullName.Substring((Resolve-Path $d).Path.Length + 1) }
           "total {0:N1} MB" -f ((Get-ChildItem -Recurse -File $d | Measure-Object Length -Sum).Sum / 1MB)
       - name: Test the deployed folder (clean PATH, no Qt environment)
@@ -94,6 +101,10 @@ jobs:
           Remove-Item env:QT_PLUGIN_PATH -ErrorAction SilentlyContinue
           dist\LibreDrop\LibreDropCLI.exe video examples\water_on_glass.mkv --scale 94.23 | Tee-Object video.txt
           if (-not (Select-String -Quiet "1 drops" video.txt)) { throw "video analysis failed" }
+          # the live camera path through the bundled ffmpeg, with its test picture as the camera
+          dist\LibreDrop\LibreDropCLI.exe record cam.mkv --camera "ffmpeg:lavfi:testsrc2=size=320x240:rate=30" --seconds 2 | Tee-Object cam.txt
+          if (-not (Select-String -Quiet " 30.0 fps" cam.txt)) { throw "ffmpeg camera failed" }
+          dist\LibreDrop\LibreDropCLI.exe cameras
           $env:LIBREDROP_SHOT = "shot.png,40"
           $p = Start-Process dist\LibreDrop\LibreDrop.exe -ArgumentList "--example" -Wait -PassThru -NoNewWindow
           if (-not (Test-Path shot.png)) { throw "GUI did not run ($($p.ExitCode))" }
@@ -141,6 +152,19 @@ jobs:
         run: |
           APP=dist-mac/LibreDrop.app
           macdeployqt "$APP" -executable="$APP/Contents/MacOS/LibreDropCLI" -libpath="$QT_ROOT_DIR/lib"
+          # ffmpeg (static builds by Martin Riedl, pinned, both architectures joined): the live camera (AVFoundation)
+          # and video formats other than MJPEG
+          get() { curl -fsSL -o "$3" "https://ffmpeg.martin-riedl.de/download/macos/$1/$2.zip" && echo "$4  $3" | shasum -a 256 -c; }
+          get arm64/1795207104_9.1 ffmpeg arm-ffmpeg.zip 1f66e9a690a7f1c9e60b012379f8869c11818d1797f45b21dbb2f2564ba61ae1
+          get arm64/1795207104_9.1 ffprobe arm-ffprobe.zip 6ef2df5f575042923a28537ab37adf936f28bf3e7b85de23a1447ed447ec1dbd
+          get amd64/1795212433_9.1 ffmpeg x86-ffmpeg.zip 35b3d82cccc2c1d644d49d15f5e57eb913a08ef68f798042c90eecec62c51f1e
+          get amd64/1795212433_9.1 ffprobe x86-ffprobe.zip 41ca7b7cba7992e33f1da3f1bf54db8ec103a4d387b1bfac3162062e8b1074ad
+          for a in arm x86; do mkdir -p ff-$a; for f in ffmpeg ffprobe; do unzip -o -q $a-$f.zip -d ff-$a; done; done
+          for f in ffmpeg ffprobe; do lipo -create ff-arm/$f ff-x86/$f -output "$APP/Contents/MacOS/$f"; chmod +x "$APP/Contents/MacOS/$f"; done
+          lipo -archs "$APP/Contents/MacOS/ffmpeg"
+          { echo "ffmpeg and ffprobe in Contents/MacOS: static builds from https://ffmpeg.martin-riedl.de (FFmpeg 9.1),"
+            echo "licensed under the GNU GPL version 3 or later (below); sources at https://ffmpeg.org/download.html"
+            echo; curl -fsSL https://www.gnu.org/licenses/gpl-3.0.txt; } > "$APP/Contents/Resources/ffmpeg-LICENSE.txt"
           cp "$QT_ROOT_DIR/plugins/platforms/libqoffscreen.dylib" "$APP/Contents/PlugIns/platforms/"
           install_name_tool -add_rpath @loader_path/../../Frameworks "$APP/Contents/PlugIns/platforms/libqoffscreen.dylib"
           codesign --force --deep --sign - "$APP"
@@ -148,6 +172,9 @@ jobs:
           lipo -archs "$APP/Contents/MacOS/LibreDrop"
           env -u QT_PLUGIN_PATH "$APP/Contents/MacOS/LibreDropCLI" video examples/water_on_glass.mkv --scale 94.23 | tee video.txt
           grep -q "1 drops" video.txt
+          # the live camera path through the bundled ffmpeg, with its test picture as the camera
+          env -u QT_PLUGIN_PATH PATH=/usr/bin:/bin "$APP/Contents/MacOS/LibreDropCLI" record cam.mkv --camera "ffmpeg:lavfi:testsrc2=size=320x240:rate=30" --seconds 2 | tee cam.txt
+          grep -q " 30.0 fps" cam.txt
           env -u QT_PLUGIN_PATH QT_QPA_PLATFORM=offscreen LIBREDROP_SHOT=shot.png,40 "$APP/Contents/MacOS/LibreDrop" --example
           test -s shot.png
       - name: dmg

@@ -18,9 +18,16 @@ Download the installer for your computer from the releases page:
   `sudo apt install ./libredrop_…deb` (the full file name, e.g. `libredrop_0.2.9_amd64.deb`).
 - **Windows**: run the `.exe` installer. **macOS**: open the `.dmg` and drag LibreDrop to Applications.
 
-The **live camera works on Linux only** so far. On Windows and macOS you can open and analyse recordings, and
-practise with the simulator (section 9). Recordings from the goniometer camera open directly; other video formats
-need ffmpeg (Linux: `sudo apt install ffmpeg`).
+Everything, including recording from the camera, works on all three. ffmpeg comes along: the Windows installer
+and the macOS app contain it, and on Linux apt installs it with LibreDrop. Differences:
+
+- **Linux**: LibreDrop sets the camera itself (Ossila's settings, and the *Exposure* field).
+- **Windows**: the camera keeps its own settings. *Camera settings…* (next to Exposure) opens the camera
+  driver's settings window; set exposure 3.9 ms (shown as −8 there), gain 0, gamma 72, contrast 32, saturation 64,
+  sharpness 0 once and the camera keeps them. If Ossila's software was used last, they are already set.
+- **macOS**: the first time, macOS asks whether LibreDrop may use the camera: allow it (System Settings ▸
+  Privacy & Security ▸ Camera if you said no). The camera's settings cannot be changed from LibreDrop; it uses
+  what it has (as Ossila's software or the camera left them).
 
 ## 2. First start and the main window
 
@@ -262,7 +269,7 @@ The simulator draws every frame, which is slow on a busy computer. Choose the **
 | Problem | What to do |
 |---|---|
 | The live image is **black** | Backlight on? Lens cap off? Otherwise raise the exposure. A **white** image: lower it. |
-| **No camera found** | Plug the camera in and press *Look again*. Live camera: Linux only for now. |
+| **No camera found** | Plug the camera in and press *Look again*. Windows and macOS: is another program (Ossila's software, a video call) using the camera? macOS: allow LibreDrop in System Settings ▸ Privacy & Security ▸ Camera. |
 | The camera runs slower than its rate | The exposure is longer than one frame: shorten it. The real frame times are recorded, so results are not affected. |
 | **"no drop on a surface"** / **"surface not found"** | The surface must be visible as a straight edge across the image (or, on glass, the drop's reflection). Check backlight and focus; mount the sample flat with a straight edge. |
 | Angle looks wrong | Step to the frame and look: does the outline follow the drop, is the dashed line on the surface? Read the checks below the table. Untick drops that are not real. |

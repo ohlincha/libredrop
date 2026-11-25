@@ -22,6 +22,11 @@
 
 namespace ld {
 
+// The ffmpeg and ffprobe programs to run: LIBREDROP_FFMPEG, else next to the program (Windows installer, macOS
+// bundle), else Homebrew's, else on PATH.
+QString ffmpegProgram();
+QString ffprobeProgram();
+
 struct VideoInfo {
     int w = 0, h = 0;
     std::vector<double> times;     // seconds, one per frame

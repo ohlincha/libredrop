@@ -100,6 +100,7 @@ protected:
 private:
     void cameraChosen();
     void startCamera();
+    void openCameraSettings();
     void stopCamera();
     void frameReady();
     void previewDone();
@@ -115,6 +116,8 @@ private:
     QComboBox* camera_ = nullptr;
     QComboBox* mode_ = nullptr;
     QDoubleSpinBox* exposure_ = nullptr;
+    QPushButton* camSettings_ = nullptr;
+    QString exposureTip_;   // the camera driver's settings dialog (Windows, through ffmpeg)
     QCheckBox* live_ = nullptr;
     QComboBox* sample_ = nullptr;
     QComboBox* side_ = nullptr;

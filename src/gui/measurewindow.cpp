@@ -1,5 +1,7 @@
 #include "measurewindow.h"
 
+#include "core/video.h"
+
 #include <QApplication>
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -21,6 +23,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QProcess>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QStyle>
@@ -205,9 +208,10 @@ MeasureWindow::MeasureWindow(MeasureContext ctx, QWidget* parent) : QWidget(pare
     exposure_->setSingleStep(0.1);
     exposure_->setSuffix(tr(" ms"));
     exposure_->setValue(st.value(QStringLiteral("measure/exposureMs"), 3.9).toDouble());
-    exposure_->setToolTip(tr("<p>Exposure time. 3.9 ms is Ossila's setting for the goniometer with its backlight on. "
+    exposureTip_ = (tr("<p>Exposure time. 3.9 ms is Ossila's setting for the goniometer with its backlight on. "
                              "Raise it if the image is dark; it must be shorter than one frame (8 ms at 120 fps).</p>"
                              "<p>The other camera settings are Ossila's (gain 0, gamma 72, contrast 32, …).</p>"));
+    exposure_->setToolTip(exposureTip_);
     live_ = new QCheckBox(tr("Find drops in the live image"));
     live_->setChecked(st.value(QStringLiteral("measure/live2"), false).toBool());
     live_->setToolTip(tr("Show the surface, the drop outline and the angle while you set up (slows the live view a little)."));
@@ -221,7 +225,16 @@ MeasureWindow::MeasureWindow(MeasureContext ctx, QWidget* parent) : QWidget(pare
     camRow->addWidget(refresh);
     camForm->addRow(tr("Camera"), camRow);
     camForm->addRow(tr("Size and rate"), mode_);
-    camForm->addRow(tr("Exposure"), exposure_);
+    camSettings_ = new QPushButton(tr("Camera settings…"));
+    camSettings_->setToolTip(tr("<p>Opens the camera driver's own settings (exposure, gain, gamma, …). The camera keeps "
+                                "them. For the goniometer: exposure 3.9 ms (−8 on the driver's scale), gain 0, gamma 72, "
+                                "contrast 32, saturation 64, sharpness 0.</p>"));
+    camSettings_->hide();
+    connect(camSettings_, &QPushButton::clicked, this, &MeasureWindow::openCameraSettings);
+    auto* expRow = new QHBoxLayout;
+    expRow->addWidget(exposure_, 1);
+    expRow->addWidget(camSettings_);
+    camForm->addRow(tr("Exposure"), expRow);
     scaleLabel_ = new QLabel;
     scaleLabel_->setWordWrap(true);
     needle_ = new QDoubleSpinBox;
@@ -398,6 +411,33 @@ void MeasureWindow::updateName() {
     nameShown_->setPalette(pal);
 }
 
+// The camera driver's dialog runs in an ffmpeg process that opens the camera, so the live view stops meanwhile.
+void MeasureWindow::openCameraSettings() {
+    if (recording_) return;
+    QString err;
+    auto cam = pending_ ? std::move(pending_) : ld::Camera::open(camera_->currentData().toString(), &err);
+    const QStringList args = cam ? cam->settingsDialogArgs() : QStringList();
+    cam.reset();
+    if (args.isEmpty()) return;
+    stopCamera();
+    camSettings_->setEnabled(false);
+    status_->setText(tr("Camera settings open: close them to go on"));
+    auto* p = new QProcess(this);
+    connect(p, &QProcess::finished, this, [this, p] {
+        p->deleteLater();
+        camSettings_->setEnabled(true);
+        startCamera();
+    });
+    connect(p, &QProcess::errorOccurred, this, [this, p](QProcess::ProcessError e) {
+        if (e != QProcess::FailedToStart) return;
+        p->deleteLater();
+        camSettings_->setEnabled(true);
+        status_->setText(tr("Cannot start ffmpeg (%1)").arg(ld::ffmpegProgram()));
+        startCamera();
+    });
+    p->start(ld::ffmpegProgram(), args);
+}
+
 MeasureWindow::~MeasureWindow() {
     stopCamera();
     preview_.waitForFinished();
@@ -451,6 +491,11 @@ void MeasureWindow::cameraChosen() {
         status_->style()->polish(status_);
         return;
     }
+    const bool settable = !pending_->controls().empty();
+    exposure_->setEnabled(settable);
+    exposure_->setToolTip(settable ? exposureTip_ : tr("This camera's exposure cannot be set from LibreDrop%1.")
+                                                         .arg(pending_->settingsDialogArgs().isEmpty() ? QString() : tr(": use Camera settings…")));
+    camSettings_->setVisible(!pending_->settingsDialogArgs().isEmpty());
     for (const ld::CameraMode& m : pending_->modes())
         mode_->addItem(tr("%1 × %2 at %3 fps").arg(m.w).arg(m.h).arg(m.fps, 0, 'f', m.fps == std::round(m.fps) ? 0 : 1),
                        QVariantList{m.w, m.h, m.fps});
@@ -615,7 +660,7 @@ void MeasureWindow::record() {
     meta[QStringLiteral("device")] = thread_->cameraName();
     meta[QStringLiteral("size")] = QStringLiteral("%1x%2").arg(m.w).arg(m.h);
     meta[QStringLiteral("fps_requested")] = m.fps;
-    meta[QStringLiteral("exposure_100us")] = int(std::lround(exposure_->value() * 10));
+    if (exposure_->isEnabled()) meta[QStringLiteral("exposure_100us")] = int(std::lround(exposure_->value() * 10));
     meta[QStringLiteral("controls")] = thread_->cameraSettings();
     meta[QStringLiteral("note")] = note_->text();
     meta[QStringLiteral("pre_seconds")] = kPreSeconds;

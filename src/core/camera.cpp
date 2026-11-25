@@ -4,13 +4,17 @@
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QFile>
+#include <QProcess>
+#include <QRegularExpression>
 #include <QThread>
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 
 #include "mjpeg.h"
 #include "simulate.h"
+#include "video.h"
 
 #ifdef __linux__
 #include <fcntl.h>
@@ -128,6 +132,277 @@ private:
     SimSpec base_, spec_;
     QElapsedTimer clock_;
     int frame_ = 0;
+};
+
+// Any camera ffmpeg can read, through an ffmpeg process that writes Motion-JPEG to a pipe: DirectShow on Windows,
+// AVFoundation on macOS (ids "ffmpeg:dshow:video=<name>", "ffmpeg:avfoundation:<index>"; any other ffmpeg input
+// works too, e.g. "ffmpeg:lavfi:testsrc2=size=640x480:rate=30" for tests). A camera that sends Motion-JPEG is
+// copied as it is (DirectShow), others are encoded to JPEG by ffmpeg. Frame times are the camera's, as ffmpeg reports
+// them for each frame (ffmpeg 6.1 or newer; older ones: when the frame arrives); frames are taken as they come, so
+// none are duplicated or dropped on the way.
+// The camera's settings (exposure, gamma) cannot be set this way: the camera keeps its own (Windows keeps the last
+// ones set, e.g. by Ossila's software).
+class FfmpegCamera : public Camera {
+public:
+    ~FfmpegCamera() override { stop(); }
+
+    static QString runProbe(const QStringList& args) {
+        QProcess p;
+        p.setProcessChannelMode(QProcess::MergedChannels);
+        p.start(ffmpegProgram(), QStringList{QStringLiteral("-hide_banner")} + args);
+        if (!p.waitForStarted(5000)) return {};
+        p.closeWriteChannel();
+        if (!p.waitForFinished(15000)) p.kill(), p.waitForFinished(2000);
+        return QString::fromLocal8Bit(p.readAll());
+    }
+
+    static std::vector<CameraInfo> listDevices() {
+        std::vector<CameraInfo> out;
+#if defined(_WIN32)
+        const QString text = runProbe({QStringLiteral("-list_devices"), QStringLiteral("true"), QStringLiteral("-f"),
+                                       QStringLiteral("dshow"), QStringLiteral("-i"), QStringLiteral("dummy")});
+        // ffmpeg 5+: "[dshow @ ...] "Name" (video)"; older: names listed under "DirectShow video devices"
+        const bool tagged = text.contains(QLatin1String("\" (video)"));
+        bool inVideo = false;
+        static const QRegularExpression q(QStringLiteral("\"([^\"]+)\"(\\s*\\((video|audio|none)[^)]*\\))?"));
+        for (const QString& line : text.split(QLatin1Char('\n'))) {
+            if (line.contains(QLatin1String("video devices"))) inVideo = true;
+            if (line.contains(QLatin1String("audio devices"))) inVideo = false;
+            if (line.contains(QLatin1String("Alternative name"))) continue;
+            const auto m = q.match(line);
+            if (!m.hasMatch()) continue;
+            if (tagged ? m.captured(3) != QLatin1String("video") : !inVideo) continue;
+            out.push_back({QStringLiteral("ffmpeg:dshow:video=") + m.captured(1), m.captured(1)});
+        }
+#elif defined(__APPLE__)
+        const QString text = runProbe({QStringLiteral("-f"), QStringLiteral("avfoundation"), QStringLiteral("-list_devices"),
+                                       QStringLiteral("true"), QStringLiteral("-i"), QString()});
+        bool inVideo = false;
+        static const QRegularExpression q(QStringLiteral("\\]\\s*\\[(\\d+)\\]\\s*(.+)$"));
+        for (const QString& line : text.split(QLatin1Char('\n'))) {
+            if (line.contains(QLatin1String("video devices"))) inVideo = true;
+            if (line.contains(QLatin1String("audio devices"))) inVideo = false;
+            const auto m = q.match(line.trimmed());
+            if (!inVideo || !m.hasMatch() || m.captured(2).startsWith(QLatin1String("Capture screen"))) continue;
+            out.push_back({QStringLiteral("ffmpeg:avfoundation:") + m.captured(1), m.captured(2).trimmed()});
+        }
+#endif
+        return out;
+    }
+
+    bool load(const QString& spec, QString* error) {
+        const int c = spec.indexOf(QLatin1Char(':'));
+        if (c <= 0) {
+            if (error) *error = QStringLiteral("not an ffmpeg camera: %1").arg(spec);
+            return false;
+        }
+        format_ = spec.left(c);
+        input_ = spec.mid(c + 1);
+        name_ = input_.startsWith(QLatin1String("video=")) ? input_.mid(6) : input_;
+        if (format_ == QLatin1String("dshow")) {
+            static const QRegularExpression re(QStringLiteral(
+                "(vcodec|pixel_format)=(\\S+)\\s+min s=(\\d+)x(\\d+) fps=([\\d.]+)\\s+max s=(\\d+)x(\\d+) fps=([\\d.]+)"));
+            const QString text = runProbe({QStringLiteral("-list_options"), QStringLiteral("true"), QStringLiteral("-f"),
+                                           QStringLiteral("dshow"), QStringLiteral("-i"), input_});
+            for (const QString& line : text.split(QLatin1Char('\n'))) {
+                const auto m = re.match(line);
+                if (!m.hasMatch()) continue;
+                Mode md{{m.captured(6).toInt(), m.captured(7).toInt(), m.captured(8).toDouble()},
+                        m.captured(1) == QLatin1String("vcodec") && m.captured(2) == QLatin1String("mjpeg")};
+                addMode(md);
+            }
+        } else if (format_ == QLatin1String("avfoundation")) {
+            // the supported modes are listed when an unsupported size is asked for
+            static const QRegularExpression re(QStringLiteral("(\\d+)x(\\d+)@\\[([\\d.]+) ([\\d.]+)\\]fps"));
+            const QString text = runProbe({QStringLiteral("-f"), QStringLiteral("avfoundation"), QStringLiteral("-video_size"),
+                                           QStringLiteral("1x1"), QStringLiteral("-i"), input_});
+            for (const QString& line : text.split(QLatin1Char('\n'))) {
+                const auto m = re.match(line);
+                if (m.hasMatch()) addMode({{m.captured(1).toInt(), m.captured(2).toInt(), m.captured(4).toDouble()}, false});
+            }
+        } else {   // e.g. lavfi: size and rate come with the input
+            static const QRegularExpression size(QStringLiteral("size=(\\d+)x(\\d+)")), rate(QStringLiteral("rate=([\\d.]+)"));
+            const auto s = size.match(input_), r = rate.match(input_);
+            modes_.push_back({{s.hasMatch() ? s.captured(1).toInt() : 320, s.hasMatch() ? s.captured(2).toInt() : 240,
+                               r.hasMatch() ? r.captured(1).toDouble() : 25}, false});
+            fixed_ = true;
+        }
+        if (modes_.empty()) {
+            if (error)
+                *error = QStringLiteral("cannot read the modes of %1 through ffmpeg (%2); is ffmpeg installed?")
+                             .arg(name_, ffmpegProgram());
+            return false;
+        }
+        // largest first, as the V4L2 camera lists them
+        std::stable_sort(modes_.begin(), modes_.end(), [](const Mode& a, const Mode& b) { return a.m.w * a.m.h > b.m.w * b.m.h; });
+        return true;
+    }
+
+    QString name() const override { return name_; }
+    std::vector<CameraMode> modes() const override {
+        std::vector<CameraMode> out;
+        for (const Mode& m : modes_) out.push_back(m.m);
+        return out;
+    }
+    CameraMode mode() const override { return mode_.m; }
+    QStringList settingsDialogArgs() const override {
+        if (format_ != QLatin1String("dshow")) return {};
+        return {QStringLiteral("-hide_banner"), QStringLiteral("-loglevel"), QStringLiteral("error"), QStringLiteral("-f"),
+                QStringLiteral("dshow"), QStringLiteral("-show_video_device_dialog"), QStringLiteral("true"), QStringLiteral("-i"),
+                input_, QStringLiteral("-frames:v"), QStringLiteral("1"), QStringLiteral("-f"), QStringLiteral("null"), QStringLiteral("-")};
+    }
+
+    bool start(const CameraMode& want, QString* error) override {
+        stop();
+        mode_ = modes_.front();
+        for (const Mode& m : modes_)
+            if (m.m.w == want.w && m.m.h == want.h && std::abs(m.m.fps - want.fps) < 0.5) { mode_ = m; break; }
+        QStringList a{QStringLiteral("-hide_banner"), QStringLiteral("-nostats"), QStringLiteral("-loglevel"), QStringLiteral("error"),
+                      QStringLiteral("-fflags"), QStringLiteral("nobuffer")};
+        if (format_ == QLatin1String("lavfi")) a << QStringLiteral("-re");
+        a << QStringLiteral("-f") << format_;
+        if (format_ == QLatin1String("dshow")) {
+            a << QStringLiteral("-rtbufsize") << QStringLiteral("256M");
+            if (mode_.mjpeg) a << QStringLiteral("-vcodec") << QStringLiteral("mjpeg");
+        }
+        if (!fixed_)
+            a << QStringLiteral("-video_size") << QStringLiteral("%1x%2").arg(mode_.m.w).arg(mode_.m.h)
+              << QStringLiteral("-framerate") << QString::number(mode_.m.fps);
+        a << QStringLiteral("-i") << input_ << QStringLiteral("-an");
+        if (mode_.mjpeg) a << QStringLiteral("-c:v") << QStringLiteral("copy");
+        else a << QStringLiteral("-c:v") << QStringLiteral("mjpeg") << QStringLiteral("-q:v") << QStringLiteral("3")
+               << QStringLiteral("-pix_fmt") << QStringLiteral("yuvj420p");
+        a << QStringLiteral("-fps_mode") << QStringLiteral("passthrough") << QStringLiteral("-flush_packets") << QStringLiteral("1")
+          << QStringLiteral("-f") << QStringLiteral("mjpeg");
+        stamps_ = ffmpegVersion() >= 601;   // -stats_mux_pre: each frame's number and time, on stderr
+        if (stamps_) a << QStringLiteral("-stats_mux_pre") << QStringLiteral("pipe:2") << QStringLiteral("-stats_mux_pre_fmt") << QStringLiteral("{n} {t}");
+        a << QStringLiteral("-");
+        times_.clear();
+        errText_.clear();
+        errBuf_.clear();
+        proc_ = std::make_unique<QProcess>();
+        proc_->start(ffmpegProgram(), a);
+        if (!proc_->waitForStarted(10000)) {
+            if (error) *error = QStringLiteral("cannot start %1 (install ffmpeg, or set LIBREDROP_FFMPEG)").arg(ffmpegProgram());
+            proc_.reset();
+            return false;
+        }
+        buf_.clear();
+        scan_ = 0;
+        seq_ = 0;
+        clock_.start();
+        return true;
+    }
+
+    bool grab(CameraFrame* out, QString* error) override {
+        if (!proc_) {
+            if (error) *error = QStringLiteral("camera not started");
+            return false;
+        }
+        QElapsedTimer waited;
+        waited.start();
+        for (;;) {
+            // one JPEG: from SOI (FF D8) to EOI (FF D9); inside the coded data FF is always followed by 00 or a
+            // restart marker, so the first FF D9 ends the frame
+            const int soi = buf_.indexOf("\xff\xd8", 0);
+            if (soi > 0) buf_.remove(0, soi), scan_ = std::max(0, scan_ - soi);
+            if (soi >= 0) {
+                const int eoi = buf_.indexOf("\xff\xd9", std::max(2, scan_));
+                if (eoi >= 0) {
+                    double t = clock_.nsecsElapsed() * 1e-9;
+                    if (stamps_) {   // its time is written just before the frame; wait briefly if it is late
+                        QElapsedTimer w;
+                        w.start();
+                        while (!times_.count(seq_) && w.elapsed() < 500 && proc_->state() != QProcess::NotRunning) {
+                            proc_->waitForReadyRead(20);
+                            readErr();
+                        }
+                        const auto it = times_.find(seq_);
+                        if (it != times_.end()) t = it->second;
+                        times_.erase(times_.begin(), times_.upper_bound(seq_));
+                    }
+                    out->jpeg = buf_.left(eoi + 2);
+                    buf_.remove(0, eoi + 2);
+                    scan_ = 0;
+                    out->t = t;
+                    out->sequence = seq_++;
+                    return true;
+                }
+                scan_ = std::max(0, int(buf_.size()) - 1);
+            }
+            if (proc_->state() == QProcess::NotRunning || waited.elapsed() > 5000) {
+                readErr();
+                const QString msg = errText_.join(QLatin1Char(' ')).trimmed();
+                if (error)
+                    *error = msg.isEmpty() ? QStringLiteral("no picture from %1").arg(name_) : QStringLiteral("%1: %2").arg(name_, msg);
+                return false;
+            }
+            proc_->waitForReadyRead(200);
+            buf_ += proc_->readAllStandardOutput();
+            readErr();
+            if (buf_.size() > 64 * 1024 * 1024) buf_.clear(), scan_ = 0;   // not JPEG at all
+        }
+    }
+
+    void stop() override {
+        if (!proc_) return;
+        proc_->kill();
+        proc_->waitForFinished(3000);
+        proc_.reset();
+    }
+
+private:
+    // ffmpeg's version as major*100 + minor (0 if unknown)
+    static int ffmpegVersion() {
+        static const int v = [] {
+            const auto m = QRegularExpression(QStringLiteral("ffmpeg version n?(\\d+)\\.(\\d+)")).match(runProbe({QStringLiteral("-version")}));
+            return m.hasMatch() ? m.captured(1).toInt() * 100 + m.captured(2).toInt() : 0;
+        }();
+        return v;
+    }
+    // stderr: frame stamps ("n t") and messages (the last few kept for errors)
+    void readErr() {
+        errBuf_ += proc_->readAllStandardError();
+        int nl;
+        while ((nl = errBuf_.indexOf('\n')) >= 0) {
+            const QString line = QString::fromLocal8Bit(errBuf_.left(nl)).trimmed();
+            errBuf_.remove(0, nl + 1);
+            const int sp = line.indexOf(QLatin1Char(' '));
+            bool okN = false, okT = false;
+            const int n = sp > 0 ? line.left(sp).toInt(&okN) : 0;
+            const double t = sp > 0 ? line.mid(sp + 1).toDouble(&okT) : 0;
+            if (okN && okT) times_[n] = t;
+            else if (!line.isEmpty()) {
+                errText_ << line;
+                while (errText_.size() > 3) errText_.removeFirst();
+            }
+        }
+    }
+    struct Mode {
+        CameraMode m;
+        bool mjpeg = false;   // the camera sends Motion-JPEG: copied as it is
+    };
+    void addMode(const Mode& md) {
+        for (Mode& m : modes_)
+            if (m.m.w == md.m.w && m.m.h == md.m.h) {   // one entry per size: Motion-JPEG if offered, else the fastest
+                if ((md.mjpeg && !m.mjpeg) || (md.mjpeg == m.mjpeg && md.m.fps > m.m.fps)) m = md;
+                return;
+            }
+        modes_.push_back(md);
+    }
+    QString format_, input_, name_;
+    std::vector<Mode> modes_;
+    Mode mode_;
+    bool fixed_ = false;
+    std::unique_ptr<QProcess> proc_;
+    QByteArray buf_;
+    int scan_ = 0;
+    int seq_ = 0;
+    QElapsedTimer clock_;
+    bool stamps_ = false;
+    std::map<int, double> times_;
+    QByteArray errBuf_;
+    QStringList errText_;
 };
 
 #ifdef __linux__
@@ -350,10 +625,14 @@ std::vector<CameraInfo> Camera::list(bool withDemo) {
         QString err;
         if (c.openDevice(dev, &err)) out.push_back({dev, c.name()});
     }
+#else
+    for (const CameraInfo& c : FfmpegCamera::listDevices()) out.push_back(c);
 #endif
     if (withDemo)
         for (const SimSpec& p : simPresets()) out.push_back({QStringLiteral("synth:") + p.name, QStringLiteral("Simulator: ") + p.title});
     const QString sim = qEnvironmentVariable("LIBREDROP_SIM_CAMERA");
+    const QString ff = qEnvironmentVariable("LIBREDROP_FFMPEG_CAMERA");   // testing: any ffmpeg input, e.g. lavfi:testsrc2
+    if (!ff.isEmpty()) out.push_back({QStringLiteral("ffmpeg:") + ff, QStringLiteral("ffmpeg: %1").arg(ff)});
     if (!sim.isEmpty()) out.push_back({QStringLiteral("sim:") + sim, QStringLiteral("Simulated: %1").arg(QFileInfo(sim).fileName())});
     if (withDemo && QFile::exists(QLatin1String(kDemo))) out.push_back({demoId(), QStringLiteral("Demo: example recording (water on glass)")});
     return out;
@@ -370,12 +649,17 @@ std::unique_ptr<Camera> Camera::open(const QString& id, QString* error) {
         if (!c->load(id.mid(4), error)) return nullptr;
         return c;
     }
+    if (id.startsWith(QLatin1String("ffmpeg:"))) {
+        auto c = std::make_unique<FfmpegCamera>();
+        if (!c->load(id.mid(7), error)) return nullptr;
+        return c;
+    }
 #ifdef __linux__
     auto c = std::make_unique<V4l2Camera>();
     if (!c->openDevice(id, error)) return nullptr;
     return c;
 #else
-    *error = QStringLiteral("live cameras are only supported on Linux so far");
+    if (error) *error = QStringLiteral("no camera %1").arg(id);
     return nullptr;
 #endif
 }
