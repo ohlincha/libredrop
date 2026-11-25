@@ -14,4 +14,6 @@ something is untested on real images.
   `scene`, `video`, `report` for whole frames, videos and saved tables (knowledge/video.md).
 - GUI (`src/gui`, binary `LibreDrop`): check it without a display: `QT_QPA_PLATFORM=offscreen
   LIBREDROP_SHOT=out.png,SECONDS LibreDrop FILE` saves a screenshot after SECONDS and quits.
-- Keep tests green; every method change is checked against synthetic drops (tests/test_drop.cpp).
+- Keep tests green; every method change is checked against synthetic drops (tests/test_drop.cpp) and real frames
+  (tests/test_real.cpp). Whole real recordings: testdata/ (videos not in git; `tools/regress_videos.sh` vs
+  testdata/expected.txt). Store every new real measurement there (user, 2026-11-25).

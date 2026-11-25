@@ -1,0 +1,24 @@
+== Water_20261125_114532.mkv
+296 frames measured; surface y 681.1 px (tilt 0.11°, from 12 frames); 1 drops
+drop 1 at x 12.53 mm: touched at 14.41 s, 81 frames (0 not measurable)
+  free from 14.41 s (0.00 s after contact) to 19.77 s
+  angle 48.8° -> 37.0° (-1.579°/s), base 4.540 -> 5.015 mm, volume 8.401 -> 8.050 uL (-0.0853 uL/s)
+  angle after contact 0.1 s: 48.8°, 1 s: 40.0°, 10 s: nan°; sorptivity 0.0131 mm/s^0.5 (R² 0.880); still there at the end
+== Water_3m-postit_20261125_115059.mkv
+515 frames measured; surface y 646.7 px (tilt -0.99°, from 16 frames); 1 drops
+drop 1 at x 12.61 mm: touched at 15.15 s, 289 frames (0 not measurable)
+  free from 15.15 s (0.00 s after contact) to 34.46 s
+  angle 97.4° -> 51.7° (-1.178°/s), base 2.629 -> 4.368 mm, volume 6.637 -> 15.507 uL (31.4 uL/s)
+  angle after contact 0.1 s: 101.4°, 1 s: 72.9°, 10 s: 72.0°; sorptivity -2.47 mm/s^0.5 (R² 0.591); still there at the end
+== Water_3m-postit_20261125_115506.mkv
+1344 frames measured; surface y 652.0 px (tilt 0.40°, from 32 frames); 1 drops
+drop 1 at x 10.34 mm: touched at 19.57 s, 1052 frames (0 not measurable)
+  free from 19.57 s (0.00 s after contact) to 90.02 s
+  angle 112.9° -> 21.0° (-1.156°/s), base 2.831 -> 3.725 mm, volume 7.422 -> 2.316 uL (0.0433 uL/s)
+  angle after contact 0.1 s: 112.9°, 1 s: 109.7°, 10 s: 90.4°; sorptivity -0.118 mm/s^0.5 (R² 0.195); still there at the end
+== Water_3m-postit_20261125_115637_cont.mkv
+1262 frames measured; surface y 648.2 px (tilt 0.59°, from 8 frames); 1 drops
+drop 1 at x 10.69 mm: touched at 0.00 s, 268 frames (0 not measurable)
+  free from 0.00 s (0.00 s after contact) to 19.71 s
+  angle 25.9° -> 11.9° (-0.800°/s), base 3.777 -> 4.846 mm, volume 546.008 -> 546.008 uL (nan uL/s)
+  angle after contact 0.1 s: 25.9°, 1 s: 25.5°, 10 s: 17.4°; sorptivity nan mm/s^0.5 (R² nan); still there at the end

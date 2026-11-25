@@ -5,3 +5,6 @@ build/
 !tests/data/*.png
 !resources/*.png
 !examples/*.mkv
+testdata/real/*
+!testdata/real/*.json
+!testdata/real/SHA256SUMS

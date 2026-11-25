@@ -1,0 +1,33 @@
+{
+    "controls": {
+        "auto_exposure": 1,
+        "backlight_compensation": 2,
+        "brightness": 0,
+        "contrast": 32,
+        "exposure_dynamic_framerate": 0,
+        "exposure_time_absolute": 39,
+        "gain": 0,
+        "gamma": 72,
+        "hue": 0,
+        "power_line_frequency": 1,
+        "saturation": 64,
+        "sharpness": 0,
+        "white_balance_automatic": 1,
+        "white_balance_temperature": 4600
+    },
+    "device": "HD USB Camera (/dev/video0)",
+    "dropped_frames": 0,
+    "duration_s": 19.77207599999383,
+    "exposure_100us": 39,
+    "fps_measured": 29.84,
+    "fps_requested": 30,
+    "frames": 591,
+    "note": "",
+    "pre_seconds": 2,
+    "recorded_by": "LibreDrop 0.2.3",
+    "sample": {
+        "liquid": "Water"
+    },
+    "size": "1920x1080",
+    "started": "2026-11-25T11:45:31.053"
+}
