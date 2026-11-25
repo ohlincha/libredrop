@@ -50,7 +50,7 @@ Download the installer for your computer from the releases page:
 - **Windows**: run the `.exe` installer. **macOS**: open the `.dmg` and drag LibreDrop to Applications.
 
 The **live camera works on Linux only** so far. On Windows and macOS you can open and analyse recordings, and
-practise with the simulator (section 7). Recordings from the goniometer camera open directly; other video formats
+practise with the simulator (section 8). Recordings from the goniometer camera open directly; other video formats
 need ffmpeg (Linux: `sudo apt install ffmpeg`).
 
 ## 2. First start and the main window
@@ -70,7 +70,7 @@ Start **LibreDrop** from the applications menu. To try it without the instrument
 | **Plot** (bottom right) | Angle, base width and volume against time. Click it to jump to that time. |
 | **Status bar** | What the analysis found, or what went wrong. |
 
-The menus: **File** (measure, open, export, compare samples), **Project** (a folder for a study, section 6) and
+The menus: **File** (measure, open, export, compare samples), **Project** (a folder for a study, section 7) and
 **Help** (this manual, the example, a short guide to separators).
 
 ## 3. Measuring with the camera
@@ -131,15 +131,37 @@ for keeping or sending.
 
 ## 5. Soaking measurements on separators
 
-For porous samples where the drop soaks in. Work in this order:
+For porous samples where the drop soaks in. Work in this order.
 
-1. **Set up** once per camera size: the scale (section 3) and the liquid.
-2. **Glass first**, once per liquid and day: record a drop of the same liquid on a clean glass slide, for about as
-   long as you will record the separators. Open it, let it analyse, then go to the **Soaking** tab and press
-   **Use as glass reference**. This measures how fast the liquid evaporates, so that evaporation is not counted as
-   soaking. It is kept for that liquid. The Soaking tab tells you (in amber) when this is missing.
-3. **Samples**: record each sample, **3 drops or more**; both sides and both directions (MD and CD) if they may
-   differ. Use 640 × 480 (about 99 fps) when the liquid soaks in within a second or two.
+**Before you start**
+
+1. **Scale**: *From needle…* in the Measure window with the needle in view (the lab's needle: 0.4745 mm outer
+   diameter), once per camera size.
+2. **Liquid**: choose it in the main window; the same bottle for the whole series. Note the room temperature and
+   humidity (LibreDrop stores them with each recording if a USB sensor is plugged in).
+3. **Sample**: cut a strip and mount it **flat**, for example taped to a glass slide at its ends, with a **straight,
+   clean edge towards the camera**; the drop goes on near that edge. A curled or frayed edge makes the surface
+   harder to find (see the post-it in *Real examples*). Fill in sample, side and direction in the Measure window.
+
+**Glass first**, once per liquid and day: record a drop of the same liquid on a clean glass slide, for about as
+long as you will record the samples. Open it, let it analyse, then go to the **Soaking** tab and press
+**Use as glass reference**. This measures how fast the liquid evaporates, so that evaporation is not counted as
+soaking. It is kept for that liquid. The Soaking tab tells you (in amber) when this is missing.
+
+**One drop at a time**
+
+1. Dispense the **same volume** every time (for example 2–5 µL; note it in *Volume*). Let it hang from the needle.
+2. Lower the needle until the drop touches the sample, then lift it straight away; the needle must not touch the
+   sample. Press **Record** as the drop touches; the video starts 2 s earlier, so a late press is fine.
+3. Record until the drop has soaked in, or for a fixed time (for example 60 s; *Stop* after that time).
+   Use 640 × 480 (about 99 fps) when the liquid soaks in within a second or two, 1920 × 1080 otherwise.
+4. Put the next drop on a **fresh spot** (at least 5 mm from the wet area) or a new piece. Measure **3 drops or
+   more** per sample, on both sides and both directions (MD and CD) if they may differ.
+
+**Does a drop count?** Open the recording and check: the outline follows the drop and the surface line lies on
+the sample; the drop is not marked *on needle*; the Young–Laplace fit residual (*fit … px rms* in the image) is
+small (below about 1 px for a clean edge); for the sorptivity, R² ≥ 0.9. Untick drops that fail and say so.
+
 4. **Read the Soaking tab** for each recording:
 
 ![The Soaking tab for a separator (simulated recording)](manual-soaking.png)
@@ -153,7 +175,44 @@ For porous samples where the drop soaks in. Work in this order:
 
 The sorptivity depends on the scale: compare only samples measured at the same scale (camera size).
 
-## 6. Projects and comparing samples
+## 6. Reporting results
+
+**What to report** for each sample:
+
+| Item | Where it comes from |
+|---|---|
+| Sample (material, batch, side, direction) and liquid (supplier, batch) | your notes; the Measure window's fields |
+| Drop volume, temperature, relative humidity | *Volume*; the status bar / the recording's `.json` |
+| Scale and how it was set (needle diameter), camera size and frame rate | *Measurement*; Measure window |
+| Number of drops n (and of sample pieces) | the ticked drops |
+| Contact angle at fixed times after contact, mean ± SD | Soaking tab (*θ at …*), or Compare samples |
+| Sorptivity S, mean ± SD, and its R² | Soaking tab, or Compare samples |
+| Absorption time | Soaking tab (*Absorbed after*) |
+| Evaporation correction used | Soaking tab (it names the glass reference used) |
+| Method | e.g. "contact angles from Young–Laplace fits to the whole drop outline (LibreDrop); sorptivity from V(t) = V₀ − S ∫ A d√t, corrected for evaporation" |
+
+**Getting the numbers out.** Put all recordings of a study in *Compare samples* (or a project), tick the drops
+that count, **Analyse**, then **Export CSV…**: one row per drop, then a *sample_mean* and a *sample_sd* row per
+sample; paste these into your table. For figures, *File ▸ Export plot (PNG)…* saves the angle, base width and
+volume against time, or plot the per-frame CSV (*Export table*) in Origin, Excel or Python.
+
+**Worked example** (one drop of water on a 3M post-it, recorded without special care, see *Real examples*):
+
+| | Value |
+|---|---|
+| θ at 1 s / 10 s after contact | 100° / 90° |
+| Sorptivity S | 0.112 mm/√s (R² 0.93) |
+| Volume above the paper | 7.4 µL at contact, 2.0 µL after 70 s |
+| Absorption time | > 70 s (still there at the end of the recording) |
+| n | 1 drop (a report needs 3 or more) |
+| Scale | 94.23 px/mm (built-in; the needle gives 89.6 px/mm, so S would be about 5 % higher and volumes about 15 % larger) |
+| Temperature, RH | not recorded (made before LibreDrop stored them) |
+| Evaporation correction | none (no glass reference that day) |
+
+The angle at 0.1 s (93°) is left out: the drop still wobbles just after landing, which the fit residual shows. A
+proper report would give mean ± SD of three or more drops on fresh spots, with the glass reference applied.
+
+## 7. Projects and comparing samples
 
 **Projects** keep a study together. *Project ▸ New project…* makes a folder with the recordings, sample list,
 liquids, scales and glass references. The **Library** panel then lists samples and recordings: double-click a
@@ -168,7 +227,7 @@ double-click it to change it. *Export CSV…* writes every drop and the per-samp
 
 ![Compare samples (simulated recordings)](manual-compare.png)
 
-## 7. Practising with the simulator
+## 8. Practising with the simulator
 
 No instrument needed. In the Measure window, pick a camera whose name starts with **Simulator:**, for example
 *Simulator: Flat separator, soaking* or *Simulator: Water on glass (reflection)*. A needle brings a drop down, it
@@ -178,7 +237,7 @@ scale from the needle, fill in the sample, Record and Stop, then analyse.
 The simulator draws every frame, which is slow on a busy computer. Choose the **half size** in *Size and rate*
 (960 × 540) to keep up with 30 fps.
 
-## 8. Tips for good images
+## 9. Tips for good images
 
 - **Backlight on, lens cap off.** The drop must be a dark shape on a bright background.
 - **Focus on the drop.** A soft edge gives a warning ("The drop's edge is blurred") and less accurate angles.
@@ -190,7 +249,7 @@ The simulator draws every frame, which is slow on a busy computer. Choose the **
 - **Withdraw the needle** after the drop is placed; the needle in the drop spoils the angle.
 - Record for as long on glass as on the samples, and record the glass reference on the same day.
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 | Problem | What to do |
 |---|---|
