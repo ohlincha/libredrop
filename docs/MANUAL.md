@@ -9,6 +9,37 @@ What you get for each drop: the contact angle (left, right and a fit of the whol
 volume against time, and for soaking samples the angle at fixed times, the sorptivity and when the drop was
 absorbed.
 
+## Real examples (recorded without special care)
+
+These are recordings from the lab's goniometer, made quickly and without any preparation: no cleaning, no
+levelling, the sample just put on the stage. LibreDrop found the surface and the drops by itself in every frame.
+
+**Water on a glass slide.** The drop lands at 14.4 s and spreads: 53° at release, 36° after five seconds; the base
+grows from 4.4 to 5.0 mm. The surface is found from the drop's reflection in the glass.
+
+![Water on glass: angle, base width and volume against time](manual-real-glass.png)
+
+**Water on Scotch tape** (a single picture with three drops): 88° and 60° for the two drops, each measured on
+its own; the small one on the left is flagged as too small for an accurate angle.
+
+![Three drops of water on tape in one picture](manual-real-tape.png)
+
+**Water on a 3M post-it** (paper: opaque, curled, with a raised fibrous ridge and a lifted edge — about the
+worst sample there is). There is no reflection, so the surface is the paper's own edge, and each drop gets its own
+baseline next to it. On the first drop the angle falls from 115° to 64° within 20 s as the paper takes the water up:
+
+![A drop on a curled post-it](manual-real-postitA.png)
+
+A second drop, recorded for 90 s, soaks in: the angle falls from 113° to about 30°, the base first spreads and
+then stays put, and the volume above the paper falls from 7.4 to 2.0 µL. The Soaking tab gives the angle at
+0.1, 1 and 10 s after contact and the sorptivity, 0.112 mm/√s (R² 0.93). (The picture shows a frame just after
+contact, while the drop still wobbles: the fit is rough there, 7.7 px.)
+
+![The post-it soaking a drop: Soaking tab](manual-real-postitB.png)
+
+The scale in these pictures is the built-in 94.23 px/mm; calibrated with the needle (0.4745 mm) it is 89.6 px/mm,
+so sizes and volumes would be about 5 % and 15 % larger. Angles do not depend on the scale.
+
 ## 1. Installing
 
 Download the installer for your computer from the releases page:
