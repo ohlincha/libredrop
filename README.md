@@ -36,7 +36,7 @@ absorbing samples (separators).
 *File ▸ Measure with the camera…* (Ctrl+M, or **Measure…** beside Analyse) opens the live view: the camera with
 the surface, each drop's outline and its angle found in every shown frame, so the stage, focus and light can be
 set before a drop goes on. Fill in sample, side, direction, liquid and volume; press **Record** (Ctrl+R) as the drop
-touches (the last 2 s before are kept, so the contact is in the video) and **Stop** when it has settled or soaked
+touches (the video always starts 2 s earlier, so the contact is in it even if you press late) and **Stop** when it has settled or soaked
 in, or set a duration. The video (the camera's own JPEG frames with their capture times, not re-encoded) and its
 `.json` go into the open project's `recordings/` (or a chosen folder), are filed under the sample, and are opened
 and analysed.

@@ -1,6 +1,6 @@
 #pragma once
 // Measure: the live camera with the drops found in it (surface, outline, angle), and recording. Fill in the sample,
-// press Record (or Ctrl+R) when the drop touches (the last seconds before are kept), Stop when it has settled. The
+// press Record (or Ctrl+R) when the drop touches (the video starts 2 s earlier), Stop when it has settled. The
 // video and its .json go into the project's recordings/ (or a chosen folder), are added to the project, and the
 // main window opens and analyses them.
 #include <QFutureWatcher>
@@ -121,7 +121,6 @@ private:
     QDoubleSpinBox* volume_ = nullptr;
     QCheckBox* control_ = nullptr;
     QLineEdit* note_ = nullptr;
-    QDoubleSpinBox* pre_ = nullptr;
     QSpinBox* maxSeconds_ = nullptr;
     QLabel* folder_ = nullptr;
     QLineEdit* name_ = nullptr;                           // own file name (empty: from the sample fields)

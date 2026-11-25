@@ -168,6 +168,10 @@ void CameraThread::run() {
 // ---------------------------------------------------------------------------------------------------------------
 namespace {
 
+// Every video starts this long before Record was pressed (the camera's frames are kept in memory meanwhile), so the
+// moment the drop touches is recorded even when Record is pressed a little late.
+constexpr double kPreSeconds = 2.0;
+
 QString shortLiquid(const QString& name) {   // "Dimethyl carbonate (DMC)" → DMC
     const int a = name.lastIndexOf(QLatin1Char('(')), b = name.lastIndexOf(QLatin1Char(')'));
     return a >= 0 && b > a + 1 ? name.mid(a + 1, b - a - 1) : name;
@@ -258,13 +262,6 @@ MeasureWindow::MeasureWindow(MeasureContext ctx, QWidget* parent) : QWidget(pare
     sForm->addRow(control_);
     sForm->addRow(tr("Note"), note_);
 
-    pre_ = new QDoubleSpinBox;
-    pre_->setRange(0, 10);
-    pre_->setDecimals(1);
-    pre_->setSuffix(tr(" s"));
-    pre_->setValue(st.value(QStringLiteral("measure/preSeconds"), 2.0).toDouble());
-    pre_->setToolTip(tr("Frames from before Record was pressed that go into the video: press Record as the drop touches "
-                        "and the contact is still recorded."));
     maxSeconds_ = new QSpinBox;
     maxSeconds_->setRange(0, 3600);
     maxSeconds_->setSuffix(tr(" s"));
@@ -297,7 +294,6 @@ MeasureWindow::MeasureWindow(MeasureContext ctx, QWidget* parent) : QWidget(pare
     for (QComboBox* c : {sample_, side_, direction_, liquid_})
         connect(c, &QComboBox::currentTextChanged, this, &MeasureWindow::updateName);
     connect(name_, &QLineEdit::textChanged, this, &MeasureWindow::updateName);
-    rForm->addRow(tr("Keep from before"), pre_);
     rForm->addRow(tr("Stop"), maxSeconds_);
     auto* fRow = new QHBoxLayout;
     fRow->addWidget(folder_, 1);
@@ -323,14 +319,10 @@ MeasureWindow::MeasureWindow(MeasureContext ctx, QWidget* parent) : QWidget(pare
     status_->setWordWrap(true);
     auto* help = new QLabel(tr("<p><b>How to measure</b><br>1. Backlight on, lens cap off; sample on the stage.<br>"
                                "2. Fill in the sample and liquid.<br>3. Bring the drop down; press <b>Record</b> as it "
-                               "touches (the last %1 s before are kept).<br>4. Press <b>Stop</b> when the drop has "
-                               "settled or soaked in.</p>")
-                                .arg(QStringLiteral("2")));
+                               "touches. The video starts %1 s earlier, so the touch is in it even if you press late."
+                               "<br>4. Press <b>Stop</b> when the drop has settled or soaked in.</p>")
+                                .arg(kPreSeconds));
     help->setWordWrap(true);
-    connect(pre_, &QDoubleSpinBox::valueChanged, help, [help, this] {
-        help->setText(help->text().replace(QRegularExpression(QStringLiteral("last [0-9.]+ s")),
-                                           QStringLiteral("last %1 s").arg(pre_->value())));
-    });
 
     auto* side = new QWidget;
     auto* sl = new QVBoxLayout(side);
@@ -471,7 +463,7 @@ void MeasureWindow::startCamera() {
     }
     const QVariantList v = mode_->currentData().toList();
     const ld::CameraMode m{v.value(0).toInt(), v.value(1).toInt(), v.value(2).toDouble()};
-    thread_ = new CameraThread(std::move(pending_), m, std::max(1, int(std::lround(exposure_->value() * 10))), pre_->value());
+    thread_ = new CameraThread(std::move(pending_), m, std::max(1, int(std::lround(exposure_->value() * 10))), kPreSeconds);
     connect(thread_, &CameraThread::frameReady, this, &MeasureWindow::frameReady, Qt::QueuedConnection);
     connect(thread_, &CameraThread::failed, this, [this](const QString& e) {
         status_->setText(tr("Camera stopped: %1").arg(e));
@@ -601,7 +593,7 @@ void MeasureWindow::record() {
     meta[QStringLiteral("exposure_100us")] = int(std::lround(exposure_->value() * 10));
     meta[QStringLiteral("controls")] = thread_->cameraSettings();
     meta[QStringLiteral("note")] = note_->text();
-    meta[QStringLiteral("pre_seconds")] = pre_->value();
+    meta[QStringLiteral("pre_seconds")] = kPreSeconds;
     auto put = [&sample](const char* k, const QString& v) {
         if (!v.trimmed().isEmpty()) sample[QLatin1String(k)] = v.trimmed();
     };
@@ -621,7 +613,7 @@ void MeasureWindow::record() {
     }
 
     recording_ = true;
-    for (QWidget* w : std::initializer_list<QWidget*>{camera_, mode_, sample_, side_, direction_, liquid_, volume_, control_, note_, pre_, maxSeconds_, folderButton_, name_})
+    for (QWidget* w : std::initializer_list<QWidget*>{camera_, mode_, sample_, side_, direction_, liquid_, volume_, control_, note_, maxSeconds_, folderButton_, name_})
         w->setEnabled(false);
     record_->setText(tr("Starting…"));
     record_->setEnabled(false);
@@ -633,7 +625,7 @@ void MeasureWindow::record() {
 
 void MeasureWindow::recordingStopped(const QString& path, int frames, double seconds, double fps, int dropped, const QString& error) {
     recording_ = false;
-    for (QWidget* w : std::initializer_list<QWidget*>{camera_, mode_, sample_, side_, direction_, liquid_, volume_, control_, note_, pre_, maxSeconds_, folderButton_, name_})
+    for (QWidget* w : std::initializer_list<QWidget*>{camera_, mode_, sample_, side_, direction_, liquid_, volume_, control_, note_, maxSeconds_, folderButton_, name_})
         w->setEnabled(true);
     record_->setText(tr("● Record"));
     record_->setEnabled(thread_ != nullptr);
@@ -683,7 +675,6 @@ void MeasureWindow::saveSettings() const {
     st.setValue(QStringLiteral("measure/direction"), direction_->currentText());
     st.setValue(QStringLiteral("measure/liquid"), liquid_->currentText());
     st.setValue(QStringLiteral("measure/volume"), volume_->value());
-    st.setValue(QStringLiteral("measure/preSeconds"), pre_->value());
     st.setValue(QStringLiteral("measure/maxSeconds"), maxSeconds_->value());
     st.setValue(QStringLiteral("measure/folder"), chosenDir_);
     st.setValue(QStringLiteral("measure/analyse"), analyse_->isChecked());
