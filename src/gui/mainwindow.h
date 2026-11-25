@@ -69,6 +69,7 @@ private:
     QTreeWidget* table_ = nullptr;
     QTreeWidget* soakTable_ = nullptr;
     class CompareDialog* compare_ = nullptr;
+    class MeasureWindow* measure_ = nullptr;
     class LibraryPanel* library_ = nullptr;
     // room conditions from an attached USB thermometer (status bar; logged into the open project)
     QLabel* conditions_ = nullptr;
@@ -96,6 +97,7 @@ private:
 public:
     void openCompare(const QStringList& files, const QStringList& samples = {});   // Compare samples (with these added)
     bool openProject(const QString& dir);
+    void openMeasure();   // the live camera and recording
 private:                 // widen the side panel so every table column shows
     QLabel* checks_ = nullptr;
     QWidget* plotBox_ = nullptr;

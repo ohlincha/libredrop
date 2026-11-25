@@ -7,8 +7,8 @@ comes first.
 
 **Status: early development.** The analysis works on synthetic drops of known angle and on the first real
 recordings from an Ossila goniometer (water on glass and tape, 17–90°), whole frames and whole videos, from the
-command line and in a first graphical program. Not yet tried on absorbing samples (separators); no live camera
-yet.
+command line and in the graphical program, which also records from the camera (Linux). Not yet tried on
+absorbing samples (separators).
 
 - Contact angle by Young–Laplace fit (with gravity; also gives the Bond number), tangent (left and right
   separately), circle, ellipse and height–width methods.
@@ -30,6 +30,24 @@ yet.
   Step through the frames with the surface, each drop's outline, contact points, tangents and angle drawn on
   them; tick the drops that count; angle, base width and volume against time with a cursor (click the plot to
   jump there); export the table and the plot. Scale and liquid (water, DMC, DEC, PC or custom) are remembered.
+
+## Measuring (live camera)
+
+*File ▸ Measure with the camera…* (Ctrl+M, or **Measure…** beside Analyse) opens the live view: the camera with
+the surface, each drop's outline and its angle found in every shown frame, so the stage, focus and light can be
+set before a drop goes on. Fill in sample, side, direction, liquid and volume; press **Record** (Ctrl+R) as the drop
+touches (the last 2 s before are kept, so the contact is in the video) and **Stop** when it has settled or soaked
+in, or set a duration. The video (the camera's own JPEG frames with their capture times, not re-encoded) and its
+`.json` go into the open project's `recordings/` (or a chosen folder), are filed under the sample, and are opened
+and analysed.
+
+- The goniometer camera gets Ossila's settings (exposure 3.9 ms, gain 0, gamma 72, …); change the exposure if the
+  image is too dark. The window warns about a black image (backlight off, lens cap on).
+- Sizes and rates as the camera offers them. The goniometer camera says 120 fps at 640×480 but delivers about 99;
+  the true frame times are recorded, so analysis is not affected.
+- Linux (V4L2) only for now; on Windows and macOS only the demo camera (the built-in example, replayed) is there.
+- `LibreDropCLI cameras` lists cameras, sizes and settings; `LibreDropCLI record OUT.mkv --size 640x480 --seconds 10
+  --sample kraft-A --liquid DMC` records without the window.
 
 ## Measuring separators (soaking)
 
@@ -59,7 +77,7 @@ tool's `.json`; opening a recording sets its liquid, scale and that day's evapor
 the selected samples. *Project ▸ Liquids…* and *Calibration…* edit the tables (scale from the needle's measured
 diameter). One user at a time; copy the folder to back it up or share it.
 
-Recording (Linux, beryllium): `libredrop-capture --video 20 --size 640x480 --fps 120 --sample kraft-A --side front
+Recording from a terminal (the older capture script): `libredrop-capture --video 20 --size 640x480 --fps 120 --sample kraft-A --side front
 --direction MD --liquid DMC --volume 2` (installed with the .deb; needs python3-opencv, ffmpeg, v4l-utils).
 
 S is proportional to the image scale: compare samples measured at the same scale. Not yet tried on real

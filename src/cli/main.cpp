@@ -11,9 +11,14 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QStringList>
+#include <QDateTime>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <cstdio>
 
+#include "core/camera.h"
 #include "core/drop.h"
+#include "core/recorder.h"
 #include "core/image.h"
 #include "core/pendant.h"
 #include "core/report.h"
@@ -94,8 +99,88 @@ int main(int argc, char** argv) {
                            "LibreDropCLI video FILE|IMAGES... [same options] [--step N] [--start S] [--end S] [--fps F] "
                            "[-o CSV] [--plot PNG] [--drops 2,3]\n"
                            "LibreDropCLI report TABLE.csv [--drops 2,3] [--plot PNG]\n"
-                           "LibreDropCLI synth --theta DEG [--bond B] [--radius PX] [--tilt DEG] [--needle GAP_PX] -o FILE"));
+                           "LibreDropCLI synth --theta DEG [--bond B] [--radius PX] [--tilt DEG] [--needle GAP_PX] -o FILE\n"
+                           "LibreDropCLI cameras | record OUT.mkv [--camera DEV] [--size WxH] [--seconds S] ..."));
         return a.isEmpty() ? 1 : 0;
+    }
+    if (a[0] == QLatin1String("cameras")) {   // cameras, their modes and settings
+        for (const ld::CameraInfo& c : ld::Camera::list(false)) {
+            out(c.id + QStringLiteral("  ") + c.name);
+            QString err;
+            auto cam = ld::Camera::open(c.id, &err);
+            if (!cam) { out(QStringLiteral("  ") + err); continue; }
+            for (const ld::CameraMode& m : cam->modes()) out(QStringLiteral("  %1x%2 @ %3 fps").arg(m.w).arg(m.h).arg(m.fps, 0, 'f', 1));
+            for (const ld::CameraControl& k : cam->controls())
+                out(QStringLiteral("  %1 = %2 (%3..%4, default %5)").arg(k.name).arg(k.value).arg(k.min).arg(k.max).arg(k.def));
+        }
+        return 0;
+    }
+    if (a[0] == QLatin1String("record")) {   // record from a camera
+        if (a.size() < 2 || a[1].startsWith(QLatin1String("--"))) {
+            out(QStringLiteral("LibreDropCLI record OUT.mkv [--camera /dev/videoN|sim:FILE] [--size 640x480] [--fps F] [--seconds S]\n"
+                               "  [--exposure 39 (x100 us, Ossila's settings)] [--sample NAME --side S --direction D --liquid L --volume UL --note TEXT]"));
+            return 1;
+        }
+        QString id = arg(a, "--camera");
+        if (id.isEmpty()) {
+            const auto cams = ld::Camera::list(false);
+            if (cams.empty()) { out(QStringLiteral("no camera found")); return 1; }
+            id = cams.front().id;
+        }
+        QString err;
+        auto cam = ld::Camera::open(id, &err);
+        if (!cam) { out(err); return 1; }
+        const QString size = arg(a, "--size", "1920x1080");
+        ld::CameraMode want{size.section(QLatin1Char('x'), 0, 0).toInt(), size.section(QLatin1Char('x'), 1, 1).toInt(), 0};
+        for (const ld::CameraMode& m : cam->modes()) if (m.w == want.w && m.h == want.h) want.fps = m.fps;
+        if (a.contains(QStringLiteral("--fps"))) want.fps = arg(a, "--fps").toDouble();
+        const int exposure = arg(a, "--exposure", "39").toInt();
+        if (!cam->start(want, &err)) { out(err); return 1; }
+        cam->applyOssilaSettings(exposure);   // after starting: opening the stream can reset controls
+        QJsonObject meta, sample, ctl;
+        meta[QStringLiteral("device")] = cam->name();
+        const ld::CameraMode m = cam->mode();
+        meta[QStringLiteral("size")] = QStringLiteral("%1x%2").arg(m.w).arg(m.h);
+        meta[QStringLiteral("fps_requested")] = m.fps;
+        meta[QStringLiteral("exposure_100us")] = exposure;
+        meta[QStringLiteral("note")] = arg(a, "--note");
+        for (const auto& [k, v] : cam->settings()) ctl[k] = v;
+        meta[QStringLiteral("controls")] = ctl;
+        for (const char* k : {"sample", "batch", "side", "direction", "liquid"})
+            if (const QString v = arg(a, QStringLiteral("--") + QLatin1String(k)); !v.isEmpty()) sample[QLatin1String(k)] = v;
+        if (a.contains(QStringLiteral("--volume"))) sample[QStringLiteral("volume_ul")] = arg(a, "--volume").toDouble();
+        meta[QStringLiteral("sample")] = sample;
+        ld::Recorder rec;
+        rec.preSeconds = 0;
+        if (!rec.start(a[1], m.w, m.h, meta, &err)) { out(err); return 1; }
+        const double seconds = arg(a, "--seconds", "5").toDouble();
+        ld::CameraFrame f;
+        double t0 = -1;
+        long long bytes = 0;
+        double darkest = 255, brightest = 0;
+        while (cam->grab(&f, &err)) {
+            if (t0 < 0) t0 = f.t;
+            bytes += f.jpeg.size();
+            if (rec.frames() % 30 == 0) {   // mean grey level of some frames: a black image means no light
+                QImage im = QImage::fromData(f.jpeg, "JPEG").convertToFormat(QImage::Format_Grayscale8).scaled(64, 36);
+                double s = 0;
+                for (int y = 0; y < im.height(); ++y) for (int x = 0; x < im.width(); ++x) s += im.constScanLine(y)[x];
+                s /= std::max(1, im.width() * im.height());
+                darkest = std::min(darkest, s), brightest = std::max(brightest, s);
+            }
+            if (!rec.push(f, &err)) break;
+            if (f.t - t0 >= seconds) break;
+        }
+        cam->stop();
+        QString err2;
+        rec.stop(&err2);
+        if (!err.isEmpty()) out(err);
+        if (!err2.isEmpty()) out(err2);
+        out(QStringLiteral("%1: %2 frames in %3 s = %4 fps, %5 dropped, %6 kB/frame, mean grey %7..%8 of 255, %9x%10")
+                .arg(a[1]).arg(rec.frames()).arg(rec.duration(), 0, 'f', 2).arg(rec.fps(), 0, 'f', 1).arg(rec.dropped())
+                .arg(rec.frames() ? bytes / 1024.0 / rec.frames() : 0, 0, 'f', 1).arg(darkest, 0, 'f', 0).arg(brightest, 0, 'f', 0)
+                .arg(m.w).arg(m.h));
+        return rec.frames() > 0 && err2.isEmpty() ? 0 : 1;
     }
     if (a[0] == QLatin1String("synth")) {
         ld::SynthDrop d;

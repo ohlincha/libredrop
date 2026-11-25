@@ -2,6 +2,7 @@
 
 #include "comparedialog.h"
 #include "library.h"
+#include "measurewindow.h"
 #include "projectdialogs.h"
 #include "core/pendant.h"
 
@@ -108,6 +109,8 @@ MainWindow::~MainWindow() = default;
 
 void MainWindow::buildUi() {
     QMenu* file = menuBar()->addMenu(tr("&File"));
+    file->addAction(tr("&Measure with the camera…"), QKeySequence(tr("Ctrl+M")), this, &MainWindow::openMeasure);
+    file->addSeparator();
     file->addAction(tr("&Open video or image…"), QKeySequence::Open, this, &MainWindow::open);
     file->addSeparator();
     QAction* expTable = file->addAction(tr("Export &table (CSV)…"), this, &MainWindow::exportTable);
@@ -161,6 +164,8 @@ void MainWindow::buildUi() {
             "<p><b>2. Glass first</b> (once per liquid and day): record a drop of the liquid on a clean glass slide for "
             "as long as you will record on the separators. Open it, analyse, then Soaking tab ▸ <i>Use as glass "
             "reference</i>. This is the evaporation correction; it is kept for that liquid.</p>"
+            "<p>Record with <i>File ▸ Measure with the camera…</i> (Ctrl+M): fill in sample and liquid, press Record as the "
+            "drop touches, Stop when it has settled or soaked in; the recording is filed in the project and analysed.</p>"
             "<p><b>3. Separators</b>: record each sample (3 drops or more; both sides and both directions, MD and CD, if "
             "they may differ). 640×480 at 120 fps for liquids that soak in within a second or two.</p>"
             "<p><b>4. Read</b> the Soaking tab: the angle at fixed times after contact (set the times under "
@@ -258,6 +263,11 @@ void MainWindow::buildUi() {
     sr->addWidget(evaporation_);
     form->addRow(tr("Soaking"), sr);
     auto* ar = new QHBoxLayout;
+    auto* measure = new QPushButton(tr("Measure…"));
+    measure->setObjectName(QStringLiteral("measure"));
+    measure->setToolTip(tr("Live camera: record a drop (Ctrl+M)"));
+    connect(measure, &QPushButton::clicked, this, &MainWindow::openMeasure);
+    ar->addWidget(measure);
     ar->addWidget(analyseButton_);
     ar->addWidget(progress_, 1);
     form->addRow(ar);
@@ -477,6 +487,57 @@ void MainWindow::openCompare(const QStringList& files, const QStringList& sample
     }
 }
 
+void MainWindow::openMeasure() {
+    if (!measure_) {
+        MeasureContext c;
+        c.sceneOptions = [this](int w) {
+            ld::SceneOptions o;
+            double sc = defaultScale(w);
+            if (const QVariant v = QSettings().value(QStringLiteral("scaleFor/%1").arg(w)); !v.isNull()) sc = v.toDouble();
+            if (library_->hasProject())
+                if (const ld::Calibration cal = library_->project().calibrationFor(w); std::isfinite(cal.pxPerMm)) sc = cal.pxPerMm;
+            o.drop.pxPerMm = sc;
+            o.drop.densityDiff = density_->value();
+            o.drop.surfaceTension = tension_->value();
+            return o;
+        };
+        c.recordingsDir = [this] {
+            return library_->hasProject() ? QDir(library_->project().dir).filePath(QStringLiteral("recordings")) : QString();
+        };
+        c.samples = [this] {
+            QStringList n;
+            if (library_->hasProject())
+                for (const ld::Sample& s : library_->project().samples) n << s.name;
+            return n;
+        };
+        for (int i = 0; i < liquid_->count(); ++i)
+            if (liquid_->itemText(i) != tr("Custom")) c.liquids << liquid_->itemText(i);
+        c.recorded = [this](const QString& path, bool open) {
+            if (library_->hasProject()) {
+                QString err;
+                if (library_->project().addRecording(path, false, nullptr, &err)) library_->save();
+                else statusBar()->showMessage(tr("Not added to the project: %1").arg(err), 10000);
+                library_->refresh();
+            }
+            if (open) {
+                openFile(path);
+                raise();
+                activateWindow();
+            }
+        };
+        measure_ = new MeasureWindow(std::move(c), this);
+        measure_->show();
+    } else {
+        measure_->refreshSamples();
+        if (measure_->isHidden()) {
+            measure_->show();
+            measure_->listCameras();
+        }
+    }
+    measure_->raise();
+    measure_->activateWindow();
+}
+
 bool MainWindow::openProject(const QString& dir) {
     ld::Project p;
     QString err;
@@ -488,6 +549,7 @@ bool MainWindow::openProject(const QString& dir) {
     libraryDock_->show();
     QSettings().setValue("project", dir);
     setWindowTitle(tr("LibreDrop — %1").arg(library_->project().name));
+    if (measure_) measure_->refreshSamples();
     return true;
 }
 

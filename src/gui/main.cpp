@@ -37,6 +37,10 @@ int main(int argc, char** argv) {
             "QPushButton#analyse:disabled { background: rgba(47,127,208,90); border-color: rgba(47,127,208,90); }"
             "QHeaderView::section { background: rgba(47,127,208,24); border: none;"
             "  border-right: 1px solid rgba(47,127,208,40); border-bottom: 1px solid rgba(47,127,208,110); padding: 3px 6px; }"
+            "QPushButton#record { background: #fbeaea; color: #b3261e; border: 1px solid #d9a3a0; border-radius: 4px; font-weight: 600; font-size: 12pt; }"
+            "QPushButton#record:hover { background: #f6dcdc; }"
+            "QPushButton#record[recording=\"true\"] { background: #c62828; color: white; border-color: #a31f1f; }"
+            "QPushButton#record:disabled { color: rgba(179,38,30,110); }"
             "QLabel#soakHint { border-radius: 4px; padding: 6px 8px; }"
             "QLabel#soakHint[state=\"todo\"] { background: rgba(255,209,102,70); border-left: 3px solid #e0a800; }"
             "QLabel#soakHint[state=\"ok\"] { background: rgba(47,127,208,26); border-left: 3px solid #2f7fd0; }"));
@@ -96,12 +100,26 @@ int main(int argc, char** argv) {
                 if (auto* d = w.findChild<QDialog*>())
                     if (auto* b = d->findChild<QAbstractButton*>(QStringLiteral("analyse"))) b->click();
             });
+        // LIBREDROP_MEASURE=a,b: open Measure; record from a to b seconds (if given); screenshot that window
+        const QString meas = qEnvironmentVariable("LIBREDROP_MEASURE");
+        if (!meas.isEmpty()) {
+            QTimer::singleShot(200, &w, [&w] { w.openMeasure(); });
+            const QStringList ab = meas.split(QLatin1Char(','));
+            for (int k = 0; k < 2 && ab.size() == 2; ++k)
+                QTimer::singleShot(int(ab[k].toDouble() * 1000), &w, [&w] {
+                    for (QWidget* t : QApplication::topLevelWidgets())
+                        if (auto* b = t->findChild<QAbstractButton*>(QStringLiteral("record")); b && t->isVisible()) b->click();
+                });
+        }
         // LIBREDROP_SHOT_TAB=n: show that tab of the drop table
         const int tab = qEnvironmentVariableIntValue("LIBREDROP_SHOT_TAB");
         QTimer::singleShot(ms > 0 ? ms : 3000, &w, [&w, shot, tab] {
             if (auto* t = w.findChild<QTabWidget*>()) t->setCurrentIndex(tab);
             QWidget* target = &w;
             if (auto* d = w.findChild<QDialog*>(); d && d->isVisible()) target = d;
+            if (qEnvironmentVariableIsSet("LIBREDROP_MEASURE") && !qEnvironmentVariableIsSet("LIBREDROP_SHOT_MAIN"))
+                for (QWidget* t : QApplication::topLevelWidgets())
+                    if (t->windowTitle().startsWith(QStringLiteral("Measure")) && t->isVisible()) target = t;
             target->grab().save(shot.section(QLatin1Char(','), 0, 0));
             w.close();
         });
