@@ -1,5 +1,8 @@
 #include "scene.h"
 
+#include <cstdio>
+#include <deque>
+
 #include <QtGlobal>
 #include <algorithm>
 #include <cmath>
@@ -146,16 +149,157 @@ struct Candidate {
     Pt l, r;
 };
 
+// Opaque substrates (paper, separators, films): no reflection below the drops, the sample is the dark band across
+// the frame and a drop on it is joined to that band. The band's top edge per column (topmost pixel of a blob that
+// spans the frame or reaches the bottom); -1 where there is none.
+std::vector<int> substrateTop(const GrayImage& im, const std::vector<int>& lab, const std::vector<Blob>& blobs) {
+    std::vector<char> sub(blobs.size() + 2, 0);
+    for (const Blob& b : blobs)
+        if (b.id >= 0 && std::size_t(b.id) < sub.size() && ((b.x0 == 0 && b.x1 == im.w - 1) || b.y1 >= im.h - 1)) sub[std::size_t(b.id)] = 1;
+    std::vector<int> top(std::size_t(im.w), -1);
+    for (int x = 0; x < im.w; ++x)
+        for (int y = 0; y < im.h; ++y) {
+            const int l = lab[std::size_t(y) * im.w + x];
+            if (l > 0 && std::size_t(l) < sub.size() && sub[std::size_t(l)]) {
+                top[std::size_t(x)] = y;
+                break;
+            }
+        }
+    return top;
+}
+
+// The sample's edge without what stands on it: a closing of the top-edge profile (y down: running maximum, then
+// running minimum, over `win` columns). Bumps narrower than win (drops, fibres, dirt) are bridged over; slopes,
+// curl and steps are kept. Columns without an edge take their neighbours' value.
+std::vector<double> edgeReference(std::vector<int> top, int win) {
+    const int w = int(top.size());
+    int last = -1;
+    for (int x = 0; x < w; ++x) {   // fill gaps
+        if (top[std::size_t(x)] > 0) last = top[std::size_t(x)];
+        else if (last > 0) top[std::size_t(x)] = last;
+    }
+    for (int x = w - 1; x >= 0 && top[std::size_t(x)] <= 0; --x) top[std::size_t(x)] = last;
+    for (int x = 0; x < w; ++x)
+        if (top[std::size_t(x)] <= 0) {
+            int k = x;
+            while (k < w && top[std::size_t(k)] <= 0) ++k;
+            for (int j = x; j < k; ++j) top[std::size_t(j)] = k < w ? top[std::size_t(k)] : 0;
+        }
+    auto run = [w, win](const std::vector<double>& v, bool takeMax) {   // O(w·log) is plenty for a frame's width
+        std::vector<double> out(v.size());
+        const int r = win / 2;
+        std::vector<double> buf;
+        for (int x = 0; x < w; ++x) {
+            double m = v[std::size_t(x)];
+            for (int k = std::max(0, x - r); k <= std::min(w - 1, x + r); k += 4)
+                m = takeMax ? std::max(m, v[std::size_t(k)]) : std::min(m, v[std::size_t(k)]);
+            out[std::size_t(x)] = m;
+        }
+        return out;
+    };
+    std::vector<double> v(top.begin(), top.end());
+    return run(run(v, true), false);
+}
+
+// A flat sample with a clean edge: a straight line fits most of the edge (what sticks up left out). Then that line
+// is the reference; it is the reliable case (a curled or ridged sample has no single surface line).
+bool straightEdge(const std::vector<int>& top, std::vector<double>* ref) {
+    const int w = int(top.size());
+    std::vector<Pt> pts;
+    for (int x = 0; x < w; x += 2)
+        if (top[std::size_t(x)] > 0) pts.push_back({double(x), double(top[std::size_t(x)])});
+    if (pts.size() < std::size_t(w / 4)) return false;
+    auto median = [](std::vector<double> v) {
+        std::nth_element(v.begin(), v.begin() + long(v.size() / 2), v.end());
+        return v[v.size() / 2];
+    };
+    std::vector<double> sl;
+    const std::size_t gap = std::max<std::size_t>(1, pts.size() / 3);
+    for (std::size_t i = 0; i + gap < pts.size(); i += 2) sl.push_back((pts[i + gap].y - pts[i].y) / (pts[i + gap].x - pts[i].x));
+    if (sl.empty()) return false;
+    double b = median(sl);
+    std::vector<double> ic;
+    for (const Pt& p : pts) ic.push_back(p.y - b * p.x);
+    // the edge's own level: the lower half of the intercepts (drops and fibres only raise it)
+    std::sort(ic.begin(), ic.end());
+    double a = ic[ic.size() * 2 / 3];
+    int n = 0;
+    for (int pass = 0; pass < 3; ++pass) {
+        double sx = 0, sy = 0, sxx = 0, sxy = 0;
+        n = 0;
+        for (const Pt& p : pts)
+            if (std::abs(p.y - a - b * p.x) < 3) sx += p.x, sy += p.y, sxx += p.x * p.x, sxy += p.x * p.y, ++n;
+        const double det = n * sxx - sx * sx;
+        if (n < 20 || std::abs(det) < 1e-9) return false;
+        b = (n * sxy - sx * sy) / det, a = (sy - b * sx) / n;
+    }
+    if (n < int(pts.size()) * 6 / 10 || std::abs(b) > std::tan(5 * M_PI / 180)) return false;
+    ref->resize(std::size_t(w));
+    for (int x = 0; x < w; ++x) (*ref)[std::size_t(x)] = a + b * x;
+    return true;
+}
+
+// A drop's top is a dome: highest inside, falling towards both ends (a flat-topped ridge of the sample is not).
+bool domed(const std::vector<int>& top, const std::vector<double>& ref, int x0, int x1) {
+    double sum = 0, mx = 0;
+    int at = x0, n = 0;
+    for (int x = x0; x <= x1; ++x) {
+        const double r = top[std::size_t(x)] > 0 ? ref[std::size_t(x)] - top[std::size_t(x)] : 0.0;
+        sum += r, ++n;
+        if (r > mx) mx = r, at = x;
+    }
+    const int w = x1 - x0 + 1;
+    return n && mx >= 1.15 * sum / n && at > x0 + w / 6 && at < x1 - w / 6;
+}
+
+// A drop's own baseline on an opaque sample: the line through the sample's edge (without fibres) just beyond the
+// drop's two ends, where its contact points are; further out the sample may curl away.
+Baseline localBaseline(const std::vector<double>& ref, int x0, int x1) {
+    const int w = int(ref.size());
+    auto level = [&](int from, int to) {   // median of the reference over [from, to]
+        std::vector<double> v;
+        for (int x = std::max(0, from); x <= std::min(w - 1, to); ++x) v.push_back(ref[std::size_t(x)]);
+        if (v.empty()) return std::nan("");
+        std::nth_element(v.begin(), v.begin() + long(v.size() / 2), v.end());
+        return v[v.size() / 2];
+    };
+    double yl = level(x0 - 40, x0 - 3), yr = level(x1 + 3, x1 + 40);
+    if (!std::isfinite(yl)) yl = yr;
+    if (!std::isfinite(yr)) yr = yl;
+    const double xl = x0 - 20, xr = x1 + 20, b = (yr - yl) / (xr - xl);
+    Baseline out;
+    out.p0 = {0.5 * (x0 + x1), yl + b * (0.5 * (x0 + x1) - xl)};
+    out.angle = std::atan(b);
+    out.found = true;
+    out.reflection = false;
+    return out;
+}
+
+// A drop stands up steeply from the sample somewhere on its flanks (its contact angle); a gentle bulge of the
+// sample does not: the edge's slope, over 15 px, reaches 0.3 (17°) in the outer thirds.
+bool steepSide(const std::vector<int>& top, const std::vector<double>& ref, int x0, int x1) {
+    auto riseAt = [&](int x) { return top[std::size_t(x)] > 0 ? ref[std::size_t(x)] - top[std::size_t(x)] : 0.0; };
+    const int w = x1 - x0 + 1, d = 15;
+    if (w < 3 * d) return false;
+    for (int x = x0; x + d <= x0 + w / 3; ++x)
+        if (riseAt(x + d) - riseAt(x) >= 0.3 * d) return true;
+    for (int x = x1; x - d >= x1 - w / 3; --x)
+        if (riseAt(x - d) - riseAt(x) >= 0.3 * d) return true;
+    return false;
+}
+
 }  // namespace
 
 std::optional<Baseline> combineSurfaces(const std::vector<Scene>& found) {
     std::vector<double> ys, as;
+    int reflecting = 0;
     const double x = found.empty() ? 0 : found.front().surface.p0.x;
     std::vector<std::pair<Pt, double>> pts;
     for (const Scene& s : found)
         if (s.ok && s.surface.found) {
             ys.push_back(s.surface.p0.y + std::tan(s.surface.angle) * (x - s.surface.p0.x));
             as.push_back(s.surface.angle);
+            reflecting += s.surface.reflection ? 1 : -1;
             pts.insert(pts.end(), s.surfaceCorners.begin(), s.surfaceCorners.end());
         }
     if (ys.empty()) return std::nullopt;
@@ -177,7 +321,7 @@ std::optional<Baseline> combineSurfaces(const std::vector<Scene>& found) {
     bl.p0 = {x, a + b * x};
     bl.angle = std::atan(b);
     bl.found = true;
-    bl.reflection = true;
+    bl.reflection = reflecting > 0;
     return bl;
 }
 
@@ -240,13 +384,43 @@ Scene analyzeScene(const GrayImage& im, const SceneOptions& opt) {
         };
         std::vector<Corner> pts;
         bool anyFree = false;
-        for (const Candidate& c : cands) anyFree |= c.corners && !c.top;
+        for (const Candidate& c : cands)   // a drop-sized blob with a reflection (not a speck, not the needle)
+            anyFree |= c.corners && !c.top && c.blob->x1 - c.blob->x0 + 1 >= opt.minWidthPx &&
+                       std::min(c.l.y, c.r.y) - c.blob->y0 >= std::max(opt.minHeightPx, 10.0);
         for (const Candidate& c : cands) {
             // (a blob cut off by the image's side has the image edge as its outer "corner")
             if (!c.corners || (c.top && anyFree) || c.blob->x0 == 0 || c.blob->x1 == im.w - 1) continue;
             const double rise = std::max(1.0, std::min(c.l.y, c.r.y) - c.blob->y0);
             pts.push_back({c.l, rise});
             pts.push_back({c.r, rise});
+        }
+        // no drop with a reflection, and a sample edge across most of the frame: an opaque sample. Its surface (for
+        // showing, and to hold a video's view) is the line through the edge without what stands on it.
+        if (!anyFree) {
+            const std::vector<int> top = substrateTop(im, lab, blobs);
+            int have = 0;
+            for (int t : top) have += t > 0;
+            if (have > im.w / 2) {
+                std::vector<double> ref;
+                if (!straightEdge(top, &ref)) ref = edgeReference(top, int(0.3 * im.w));
+                double sx = 0, sy = 0, sxx = 0, sxy = 0;
+                int n = 0;
+                for (int x = 0; x < im.w; x += 2)
+                    if (top[std::size_t(x)] > 0 && std::abs(top[std::size_t(x)] - ref[std::size_t(x)]) < 3) {
+                        sx += x, sy += ref[std::size_t(x)], sxx += double(x) * x, sxy += x * ref[std::size_t(x)], ++n;
+                        if (n % 8 == 0) s.surfaceCorners.push_back({{double(x), ref[std::size_t(x)]}, 1.0});
+                    }
+                const double det = n * sxx - sx * sx;
+                if (n > 20 && std::abs(det) > 1e-9) {
+                    const double bb = (n * sxy - sx * sy) / det, aa = (sy - bb * sx) / n;
+                    s.surface.p0 = {im.w / 2.0, aa + bb * im.w / 2.0};
+                    s.surface.angle = std::atan(bb);
+                    s.surface.found = true;
+                    s.surface.reflection = false;
+                    s.surfaceVotes = n;
+                    pts.clear();
+                }
+            }
         }
         // the line through two corners that the most weight agrees with (within kInlier), then least squares
         const double maxSlope = std::tan(5 * M_PI / 180);
@@ -262,10 +436,12 @@ Scene analyzeScene(const GrayImage& im, const SceneOptions& opt) {
                     if (std::abs(c.p.y - p.y - sl * (c.p.x - p.x)) < kInlier) score += c.w;
                 if (score > bestScore) bestScore = score, b = sl, a = p.y - sl * p.x;
             }
-        if (bestScore < 0) {
+        if (bestScore < 0 && s.surface.found) {
+            // the opaque sample's surface (above)
+        } else if (bestScore < 0) {
             s.error = QStringLiteral("surface not found");
             return s;
-        }
+        } else
         for (int pass = 0; pass < 2; ++pass) {
             double sw = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
             int n = 0;
@@ -284,10 +460,12 @@ Scene analyzeScene(const GrayImage& im, const SceneOptions& opt) {
                 for (const Corner& c : pts)
                     if (std::abs(c.p.y - a - b * c.p.x) < kInlier) s.surfaceCorners.push_back({c.p, c.w});
         }
-        s.surface.p0 = {im.w / 2.0, a + b * im.w / 2.0};
-        s.surface.angle = std::atan(b);
-        s.surface.found = true;
-        s.surface.reflection = true;
+        if (bestScore >= 0) {
+            s.surface.p0 = {im.w / 2.0, a + b * im.w / 2.0};
+            s.surface.angle = std::atan(b);
+            s.surface.found = true;
+            s.surface.reflection = true;
+        }
     }
     s.ok = true;
 
@@ -339,6 +517,65 @@ Scene analyzeScene(const GrayImage& im, const SceneOptions& opt) {
         if (x1 < 0 || rise < opt.minHeightPx || x1 - x0 + 1 < opt.minWidthPx || !touches || !(below || !opt.surface)) continue;
         spans.push_back({&c, x0, x1, rise});
     }
+    // drops joined to an opaque substrate: where the band's top edge rises above the surface
+    std::deque<Candidate> joined;   // (spans keep pointers)
+    std::vector<Baseline> joinedBase;   // each one's own baseline
+    if (!s.surface.reflection) {
+        const std::vector<int> top = substrateTop(im, lab, blobs);
+        // the sample's edge without what stands on it, in this frame (the sample may curl or swell as it soaks)
+        std::vector<double> ref;
+        if (!straightEdge(top, &ref)) ref = edgeReference(top, int(0.3 * im.w));
+        if (qEnvironmentVariableIsSet("LIBREDROP_EDGE_DUMP")) {   // debugging: x, edge, reference
+            if (FILE* f = std::fopen(qPrintable(qEnvironmentVariable("LIBREDROP_EDGE_DUMP")), "w")) {
+                for (int k = 0; k < im.w; ++k) std::fprintf(f, "%d %d %.1f\n", k, top[std::size_t(k)], ref[std::size_t(k)]);
+                std::fclose(f);
+            }
+        }
+        int x = 0;
+        while (x < im.w) {
+            auto riseAt = [&](int c) { return top[std::size_t(c)] < 0 ? 0.0 : ref[std::size_t(c)] - top[std::size_t(c)]; };
+            if (riseAt(x) <= 1.5) {
+                ++x;
+                continue;
+            }
+            const int x0 = x;
+            double rise = 0;
+            int yTop = im.h;
+            while (x < im.w && riseAt(x) > 1.5) rise = std::max(rise, riseAt(x)), yTop = std::min(yTop, top[std::size_t(x)]), ++x;
+            const int x1 = x - 1;
+            // (the sample's own bumps and fibres are low: a drop must stand clearly up)
+            if (rise < std::max(opt.minHeightPx, 0.02 * im.h) || x1 - x0 + 1 < std::max(opt.minWidthPx, 0.04 * im.w) || x0 == 0 ||
+                x1 == im.w - 1)
+                continue;
+            const int id = lab[std::size_t(top[std::size_t((x0 + x1) / 2)]) * im.w + (x0 + x1) / 2];
+            const Blob* bp = nullptr;
+            for (const Blob& b : blobs)
+                if (b.id == id) bp = &b;
+            if (!bp) continue;
+            if (qEnvironmentVariableIsSet("LIBREDROP_DEBUG"))
+                qDebug("joined run %d..%d rise %.1f steep %d domed %d", x0, x1, rise, steepSide(top, ref, x0, x1), domed(top, ref, x0, x1));
+            if (!steepSide(top, ref, x0, x1) || !domed(top, ref, x0, x1)) continue;   // a bulge or ridge of the sample
+            const Baseline lb = localBaseline(ref, x0, x1);
+            joined.push_back({bp, yTop == 0, false, {}, {}});
+            joinedBase.push_back(lb);
+            spans.push_back({&joined.back(), x0, x1, rise});
+        }
+    }
+    // a blob whose columns lie mostly within a bigger one's is part of that drop (its outline broke apart in this
+    // frame) or a speck in front of it, not a drop of its own: it would split the drop's columns between them
+    {
+        std::vector<Span> kept;
+        for (const Span& a : spans) {
+            bool inside = false;
+            for (const Span& b : spans) {
+                if (&a == &b || (b.x1 - b.x0) * b.rise <= (a.x1 - a.x0) * a.rise) continue;
+                const int ov = std::min(a.x1, b.x1) - std::max(a.x0, b.x0) + 1;
+                inside |= ov > 0.5 * (a.x1 - a.x0 + 1);
+            }
+            if (!inside) kept.push_back(a);
+        }
+        spans.swap(kept);
+    }
     std::sort(spans.begin(), spans.end(), [](const Span& a, const Span& b) { return a.x0 < b.x0; });
     for (std::size_t i = 0; i < spans.size(); ++i) {
         const Span& sp = spans[i];
@@ -353,8 +590,12 @@ Scene analyzeScene(const GrayImage& im, const SceneOptions& opt) {
         d.xc = 0.5 * (sp.x0 + sp.x1);
         d.width = sp.x1 - sp.x0 + 1;
         d.onNeedle = sp.c->top;
+        Baseline base = s.surface;   // a drop on an opaque sample: its own baseline
+        bool joinedDrop = false;
+        for (std::size_t k = 0; k < joined.size(); ++k)
+            if (&joined[k] == sp.c) joinedDrop = true, base = joinedBase[k];
         DropOptions o = opt.drop;
-        Baseline bl = s.surface;
+        Baseline bl = base;
         bl.p0 = {bl.p0.x - lo, bl.p0.y};
         o.baseline = bl;
         // grey levels of this drop, so that the threshold does not depend on what else is in the picture (a
@@ -362,10 +603,10 @@ Scene analyzeScene(const GrayImage& im, const SceneOptions& opt) {
         // pixels beside and above the drop, dark = 5th percentile of the drop's own pixels
         {
             std::vector<float> bg, dk;
-            const int yTop = std::max(0, int(lineY(s.surface, d.xc) - 2.5 * sp.rise) - 10);
+            const int yTop = std::max(0, int(lineY(base, d.xc) - 2.5 * sp.rise) - 10);
             for (int y = yTop; y < im.h; ++y)
                 for (int x = lo; x <= hi; ++x) {
-                    const double h = lineY(s.surface, x) - y;
+                    const double h = lineY(base, x) - y;
                     if (h < 3) continue;
                     const int l = lab[std::size_t(y) * im.w + x];
                     if (l == 0) bg.push_back(im.at(x, y));
@@ -385,10 +626,14 @@ Scene analyzeScene(const GrayImage& im, const SceneOptions& opt) {
         for (int y = 0; y < cut.h; ++y)
             for (int x = 0; x < cut.w; ++x) {
                 const int l = lab[std::size_t(y) * im.w + lo + x];
-                if (!l || l == id || y >= lineY(s.surface, lo + x) + 2) continue;
+                if (l && l == id && joinedDrop && (lo + x < sp.x0 - 2 || lo + x > sp.x1 + 2) && y < lineY(base, lo + x) - 1) {
+                    cut.at(x, y) = float(o.background);   // the substrate's fibres/dirt beside the drop
+                    continue;
+                }
+                if (!l || l == id || y >= lineY(base, lo + x) + 2) continue;
                 for (int yy = std::max(0, y - r); yy <= std::min(cut.h - 1, y + r); ++yy)
                     for (int xx = std::max(0, x - r); xx <= std::min(cut.w - 1, x + r); ++xx)
-                        if (lab[std::size_t(yy) * im.w + lo + xx] != id && yy < lineY(s.surface, lo + xx) + 2)
+                        if (lab[std::size_t(yy) * im.w + lo + xx] != id && yy < lineY(base, lo + xx) + 2)
                             cut.at(xx, yy) = float(o.background);
             }
         d.a = analyzeDrop(cut, o);

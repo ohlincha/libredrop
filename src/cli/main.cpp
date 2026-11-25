@@ -19,6 +19,7 @@
 #include "core/camera.h"
 #include "core/drop.h"
 #include "core/recorder.h"
+#include "core/thermo.h"
 #include "core/image.h"
 #include "core/pendant.h"
 #include "core/report.h"
@@ -150,6 +151,11 @@ int main(int argc, char** argv) {
             if (const QString v = arg(a, QStringLiteral("--") + QLatin1String(k)); !v.isEmpty()) sample[QLatin1String(k)] = v;
         if (a.contains(QStringLiteral("--volume"))) sample[QStringLiteral("volume_ul")] = arg(a, "--volume").toDouble();
         meta[QStringLiteral("sample")] = sample;
+        if (const ld::ThermoReading room = ld::roomConditions(ld::readThermometers()); std::isfinite(room.temperature)) {
+            meta[QStringLiteral("temperature_c")] = std::round(room.temperature * 100) / 100;
+            if (std::isfinite(room.humidity)) meta[QStringLiteral("humidity_pct")] = std::round(room.humidity * 10) / 10;
+            meta[QStringLiteral("sensor")] = room.name.isEmpty() ? room.model : room.name;
+        }
         ld::Recorder rec;
         rec.preSeconds = 0;
         if (!rec.start(a[1], m.w, m.h, meta, &err)) { out(err); return 1; }
@@ -377,6 +383,11 @@ int main(int argc, char** argv) {
                         .arg(d.a.ok ? QStringLiteral("ok") : d.a.error)
                         .arg(yl && yl->ok ? yl->left : ld::kNaN, 0, 'f', 1).arg(yl && yl->ok ? yl->right : ld::kNaN, 0, 'f', 1)
                         .arg(hw && hw->ok ? hw->left : ld::kNaN, 0, 'f', 1).arg(d.a.baseWidthPx, 0, 'f', 0).arg(d.a.heightPx, 0, 'f', 0));
+                QStringList ms;
+                for (const ld::AngleResult& m : d.a.methods)
+                    ms << QStringLiteral("%1 %2/%3%4").arg(m.method).arg(m.left, 0, 'f', 1).arg(m.right, 0, 'f', 1).arg(m.ok ? "" : "(x)");
+                out(QStringLiteral("    methods: ") + ms.join(QStringLiteral(", ")) +
+                    QStringLiteral("; baseline y %1 tilt %2°").arg(d.a.baseline.p0.y, 0, 'f', 1).arg(d.a.baseline.angle * 180 / M_PI, 0, 'f', 2));
                 for (const ld::Check& c : d.a.checks)
                     if (c.level != ld::Check::Info) out(QStringLiteral("    [%1] %2").arg(c.id, c.message));
             }

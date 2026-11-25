@@ -12,6 +12,7 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
@@ -31,6 +32,7 @@
 
 #include "core/image.h"
 #include "frameview.h"
+#include "needle.h"
 
 // ---------------------------------------------------------------------------------------------------------------
 CameraThread::CameraThread(std::unique_ptr<ld::Camera> cam, const ld::CameraMode& mode, int exposure100us, double preSeconds)
@@ -212,6 +214,15 @@ MeasureWindow::MeasureWindow(MeasureContext ctx, QWidget* parent) : QWidget(pare
     camForm->addRow(tr("Camera"), camRow);
     camForm->addRow(tr("Size and rate"), mode_);
     camForm->addRow(tr("Exposure"), exposure_);
+    scaleLabel_ = new QLabel;
+    auto* needleButton = new QPushButton(tr("From needle…"));
+    needleButton->setToolTip(tr("<p>Scale from the needle in the live image: enter its outer diameter (measured with a "
+                                "micrometer). Kept for this camera size; no project needed.</p>"));
+    connect(needleButton, &QPushButton::clicked, this, &MeasureWindow::scaleFromNeedle);
+    auto* scRow = new QHBoxLayout;
+    scRow->addWidget(scaleLabel_, 1);
+    scRow->addWidget(needleButton);
+    camForm->addRow(tr("Scale"), scRow);
     camForm->addRow(live_);
 
     sample_ = editableCombo({});
@@ -485,7 +496,10 @@ void MeasureWindow::previewDone() {
         QList<int> ids;
         if (p.scene)
             for (std::size_t i = 0; i < p.scene->drops.size(); ++i) ids << int(i + 1);
+        const bool newSize = p.image.size() != lastImage_.size();
+        lastImage_ = p.image;
         view_->setFrame(p.image, p.scene, ids);
+        if (newSize) showScale();
         QStringList lines;
         if (thread_) lines << tr("%1 fps").arg(thread_->fps(), 0, 'f', 1);
         if (p.scene) {
@@ -552,6 +566,13 @@ void MeasureWindow::record() {
     if (volume_->value() > 0) sample[QStringLiteral("volume_ul")] = volume_->value();
     if (control_->isChecked()) sample[QStringLiteral("control")] = true;
     meta[QStringLiteral("sample")] = sample;
+    double t = 0, h = 0;
+    QString sensor;
+    if (ctx_.conditions && ctx_.conditions(&t, &h, &sensor)) {   // room conditions at the start (and the end, below)
+        meta[QStringLiteral("temperature_c")] = std::round(t * 100) / 100;
+        if (std::isfinite(h)) meta[QStringLiteral("humidity_pct")] = std::round(h * 10) / 10;
+        meta[QStringLiteral("sensor")] = sensor;
+    }
 
     recording_ = true;
     for (QWidget* w : std::initializer_list<QWidget*>{camera_, mode_, sample_, side_, direction_, liquid_, volume_, control_, note_, pre_, maxSeconds_, folderButton_})
@@ -583,6 +604,19 @@ void MeasureWindow::recordingStopped(const QString& path, int frames, double sec
                              .arg(dropped ? tr(", %1 dropped by the camera").arg(dropped) : QString()));
         status_->setProperty("state", "ok");
         status_->style()->polish(status_);
+    }
+    double t = 0, h = 0;
+    QString sensor;
+    if (ctx_.conditions && ctx_.conditions(&t, &h, &sensor)) {   // the room at the end, into the .json
+        const QFileInfo fi(path);
+        QFile jf(fi.dir().filePath(fi.completeBaseName() + QStringLiteral(".json")));
+        if (jf.open(QIODevice::ReadOnly)) {
+            QJsonObject o = QJsonDocument::fromJson(jf.readAll()).object();
+            jf.close();
+            o[QStringLiteral("temperature_end_c")] = std::round(t * 100) / 100;
+            if (std::isfinite(h)) o[QStringLiteral("humidity_end_pct")] = std::round(h * 10) / 10;
+            if (jf.open(QIODevice::WriteOnly | QIODevice::Truncate)) jf.write(QJsonDocument(o).toJson());
+        }
     }
     note_->clear();
     if (ctx_.recorded) ctx_.recorded(path, analyse_->isChecked());
@@ -619,4 +653,20 @@ void MeasureWindow::closeEvent(QCloseEvent* e) {
     saveSettings();
     stopCamera();   // frees the camera for other programs
     e->accept();
+}
+
+void MeasureWindow::showScale() {
+    const double sc = ctx_.sceneOptions && !lastImage_.isNull() ? ctx_.sceneOptions(lastImage_.width()).drop.pxPerMm : 0;
+    scaleLabel_->setText(sc > 0 ? tr("%1 px/mm").arg(sc, 0, 'f', 2) : tr("not set"));
+    view_->setPxPerMm(sc);
+}
+
+void MeasureWindow::scaleFromNeedle() {
+    if (lastImage_.isNull()) return;
+    double mm = 0;
+    const double sc = askNeedleScale(this, needleWidthPx(ld::fromQImage(lastImage_)), &mm);
+    if (!(sc > 0)) return;
+    QSettings().setValue(QStringLiteral("scaleFor/%1").arg(lastImage_.width()), sc);
+    if (ctx_.scaleSet) ctx_.scaleSet(lastImage_.width(), sc, mm);
+    showScale();
 }

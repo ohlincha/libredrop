@@ -21,7 +21,8 @@ public:
     void setChosen(const QList<int>& ids);   // empty: all
     void setMessage(const QString& text);    // shown when there is no image
     void resetView();                        // back to the drops (new file)
-    void setAutoZoom(bool on);               // off: whole frame, never zooms by itself (live camera)
+    void setAutoZoom(bool on);
+    void setPxPerMm(double v);               // > 0: a scale bar in the corner               // off: whole frame, never zooms by itself (live camera)
     QSize sizeHint() const override { return {960, 520}; }
 
 signals:
@@ -57,4 +58,6 @@ private:
     QRectF dragView_;
     bool dragged_ = false;
     bool autoZoom_ = true;
+    double pxPerMm_ = 0;
+    void drawScaleBar(class QPainter& p);
 };

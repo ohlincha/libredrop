@@ -36,6 +36,37 @@ void FrameView::setMessage(const QString& text) {
     update();
 }
 
+void FrameView::setPxPerMm(double v) {
+    pxPerMm_ = v;
+    update();
+}
+
+void FrameView::drawScaleBar(QPainter& p) {
+    if (!(pxPerMm_ > 0) || image_.isNull()) return;
+    const double perMm = pxPerMm_ * scale();   // widget px per mm
+    double mm = 0.01;
+    for (double m : {0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0})
+        if (m * perMm <= 160) mm = m;
+    const double len = mm * perMm;
+    const QString label = mm >= 1 ? tr("%1 mm").arg(mm) : tr("%1 µm").arg(mm * 1000);
+    const QRectF r(width() - len - 16, height() - 30, len, 6);
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, false);
+    p.setPen(QPen(QColor(0, 0, 0, 160), 1));
+    p.setBrush(QColor(255, 255, 255, 230));
+    p.drawRect(r);
+    p.setPen(QColor(255, 255, 255));
+    QFont f = font();
+    f.setBold(true);
+    p.setFont(f);
+    const QRectF tr_(r.left() - 40, r.top() - p.fontMetrics().height() - 2, r.width() + 80, p.fontMetrics().height());
+    p.setPen(QColor(0, 0, 0, 170));
+    p.drawText(tr_.translated(1, 1), Qt::AlignHCenter | Qt::AlignBottom, label);
+    p.setPen(QColor(255, 255, 255));
+    p.drawText(tr_, Qt::AlignHCenter | Qt::AlignBottom, label);
+    p.restore();
+}
+
 void FrameView::setAutoZoom(bool on) {
     autoZoom_ = on;
     mode_ = on ? Mode::Drops : Mode::Whole;
@@ -147,6 +178,7 @@ void FrameView::paintEvent(QPaintEvent*) {
         p.drawImage(QPointF(0, 0), image_);
         p.restore();
     }
+    drawScaleBar(p);
     if (!scene_ || !scene_->ok) return;
     p.setRenderHint(QPainter::Antialiasing);
     auto map = [&](double x, double y) { return toWidget(x, y); };

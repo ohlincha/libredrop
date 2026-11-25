@@ -251,6 +251,8 @@ bool readCaptureJson(const QString& video, Recording* r, Sample* s) {
     r->liquid = m[QStringLiteral("liquid")].toString();
     r->volumeUl = num(m[QStringLiteral("volume_ul")]);
     r->notes = o[QStringLiteral("note")].toString();
+    if (o.contains(QStringLiteral("temperature_c"))) r->temperature = num(o[QStringLiteral("temperature_c")]);   // noted by Measure
+    if (o.contains(QStringLiteral("humidity_pct"))) r->humidity = num(o[QStringLiteral("humidity_pct")]);
     // a sample is side and direction of a material: name it so unless given whole
     if (!s->name.isEmpty()) {
         QStringList parts{s->name};

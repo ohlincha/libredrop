@@ -77,6 +77,7 @@ private:
     QTimer* thermoTimer_ = nullptr;
     QFutureWatcher<std::vector<ld::ThermoReading>> thermoWatcher_;
     QDateTime lastConditionsLog_;
+    ld::ThermoReading room_;               // the latest room reading (NaN if no sensor)
     void readConditions();
     void conditionsRead();
     class QDockWidget* libraryDock_ = nullptr;
@@ -100,6 +101,7 @@ public:
     void openCompare(const QStringList& files, const QStringList& samples = {});   // Compare samples (with these added)
     bool openProject(const QString& dir);
     void openMeasure();   // the live camera and recording
+    void scaleFromNeedle();   // needle diameter → px/mm for this frame width
 private:                 // widen the side panel so every table column shows
     QLabel* checks_ = nullptr;
     QWidget* plotBox_ = nullptr;

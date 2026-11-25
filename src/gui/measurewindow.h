@@ -79,6 +79,8 @@ struct MeasureContext {
     std::function<QStringList()> samples;                            // sample names in the project
     QStringList liquids;                                             // names for the liquid list
     std::function<void(const QString& path, bool open)> recorded;    // add to the project; open and analyse
+    std::function<void(int frameWidth, double pxPerMm, double needleMm)> scaleSet;   // from the needle
+    std::function<bool(double* t, double* h, QString* sensor)> conditions;          // room °C, %RH (USB sensor)
 };
 
 class MeasureWindow : public QWidget {
@@ -124,6 +126,10 @@ private:
     QCheckBox* analyse_ = nullptr;
     QLabel* status_ = nullptr;
     QLabel* readout_ = nullptr;
+    QLabel* scaleLabel_ = nullptr;
+    QImage lastImage_;                                    // the newest live frame shown (grey)
+    void scaleFromNeedle();
+    void showScale();
 
     std::unique_ptr<ld::Camera> pending_;                 // opened, modes listed, not yet streaming
     CameraThread* thread_ = nullptr;

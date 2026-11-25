@@ -517,6 +517,20 @@ DropAnalysis analyzeDrop(const GrayImage& im, const DropOptions& opt) {
     int x0 = xMax, x1 = xMax;
     while (x0 > 0 && count[std::size_t(x0 - 1)] >= 2) --x0;
     while (x1 < im.w - 1 && count[std::size_t(x1 + 1)] >= 2) ++x1;
+    if (x0 == 0 || x1 == im.w - 1) {
+        // a dark line along the surface (the sample's edge, a scratch) can join the drop's columns to the edge:
+        // count again without the last 3 px above the surface; only if the drop still reaches the edge is it cut off
+        std::vector<int> strict(std::size_t(im.w), 0);
+        for (int x = 0; x < im.w; ++x)
+            for (int y = 0; y < std::min(im.h, int(baseY(x)) - 3); ++y) strict[std::size_t(x)] += im.at(x, y) < T;
+        int s0 = xMax, s1 = xMax;
+        while (s0 > 0 && strict[std::size_t(s0 - 1)] >= 2) --s0;
+        while (s1 < im.w - 1 && strict[std::size_t(s1 + 1)] >= 2) ++s1;
+        if (s0 > 0 && s1 < im.w - 1) {   // the drop ends inside: keep the loose ends only where they are the drop's tips
+            if (x0 == 0) x0 = std::max(0, s0 - 3);
+            if (x1 == im.w - 1) x1 = std::min(im.w - 1, s1 + 3);
+        }
+    }
     if (x0 == 0 || x1 == im.w - 1)
         addCheck(a, Check::Error, QStringLiteral("border"),
                  QStringLiteral("The drop reaches the edge of the image: move the sample or use a smaller drop."));
