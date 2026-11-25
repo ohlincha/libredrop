@@ -11,9 +11,9 @@ Run `tools/regress_videos.sh` and compare with `expected.txt` (the output when t
 | Recording (2026-11-25) | Sample | What it shows | Expected |
 |---|---|---|---|
 | `Water_20261125_114532` | water on glass | reflection; 1920×1080, 30 fps, 19.8 s; drop lands at 14.4 s | 1 drop, 52.7° at release → 36° at the end, 4.4 → 5.0 mm, 0 frames lost (a speck once split the drop: gaps at 16.1–16.3 s) |
-| `Water_3m-postit_20261125_115059` | water on a 3M post-it | opaque, no reflection; curled sheet, fibrous ridge, lifted sheet edge on the left, debris on the right; 34.5 s | 1 drop from 15.2 s, ~100° → ~55°. **Known weak**: the ridge under the spreading drop; volume grows (wrong) |
-| `Water_3m-postit_20261125_115506` | water on a 3M post-it (2nd drop) | as above, wavy; 90 s at 30 fps; drop lands at 19.6 s and soaks in | 1 drop, 113° → 21–25° over 70 s, base 2.8 → 3.7 mm, volume above the paper 8.3 → 2.3 µL. Noisy in the last seconds |
-| `Water_3m-postit_20261125_115637_cont` | same drop, continued | starts 1 s after the one above ends; 84.5 s; the drop finishes soaking in | **Known weak**: followed only for 20 s (26° → 12°), volume nonsense (546 µL) |
+| `Water_3m-postit_20261125_115059` | water on a 3M post-it | opaque, no reflection; curled sheet, fibrous ridge, lifted sheet edge on the left, debris on the right; 34.5 s | 1 drop from 15.2 s, ~108° → ~52°. **Weak**: the ridge under the spreading drop; the volume rises slightly (6.4 → 6.8 µL) |
+| `Water_3m-postit_20261125_115506` | water on a 3M post-it (2nd drop) | as above, wavy; 90 s at 30 fps; drop lands at 19.6 s and soaks in | 1 drop, 113° → 30° over 70 s, base 2.8 → 3.4 mm, volume above the paper 7.4 → 2.0 µL; sorptivity 0.113 mm/√s (R² 0.94) |
+| `Water_3m-postit_20261125_115637_cont` | same drop, continued | starts 1 s after the one above ends; 84.5 s; the drop finishes soaking in | the drop followed from 2.0 µL until it has soaked in (absorbed after 19.4 s), 29° → 11°. **Weak**: three short spurious tracks of the last thin film |
 
 The user called the post-it "probably the hardest sample you will get": separators should be mounted flat, with a
 straight clean edge towards the camera, which the analysis handles reliably (a straight sample edge is used as
