@@ -49,6 +49,25 @@ and analysed.
 - `LibreDropCLI cameras` lists cameras, sizes and settings; `LibreDropCLI record OUT.mkv --size 640x480 --seconds 10
   --sample kraft-A --liquid DMC` records without the window.
 
+## Simulator
+
+Without the instrument, or to see what the analysis does with a known answer: the Measure window's camera list has
+**Simulator** scenarios, drawn frame by frame with Young–Laplace drop shapes: a needle brings a hanging drop down,
+it touches, spreads, soaks in (volume falling as √t with the contact line pinned) and disappears.
+
+| Scenario | Substrate |
+|---|---|
+| `glass` | reflecting slide: the drop's mirror image below the surface |
+| `separator` | flat opaque sheet; the drop soaks in |
+| `wavy-paper` | tilted, wavy sheet with fibres along its edge |
+| `curled-postit` | curled sheet with a raised ridge, a step, a lifted edge, fibres, swelling under the wet drop (like the post-it of 2026-11-25) |
+| `hydrophobic` | flat film, water beads up (~135°) |
+
+`LibreDropCLI simulate SCENARIO -o out.mkv [--seconds S] [--fps F]` writes a recording with its true values
+(`out_truth.csv`: angle, base, height, volume, contact points per frame); analyse it and compare. The tests do
+this for every scenario (tests/test_simulate.cpp). Drawing a 1080p frame takes about 0.2 s, so the simulated live
+view runs slower than real time (its recorded times are the simulation's).
+
 ## Measuring separators (soaking)
 
 1. **Set up** (once per camera mode): the scale, and the liquid (Measurement ▸ Liquid).

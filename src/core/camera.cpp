@@ -10,6 +10,7 @@
 #include <cmath>
 
 #include "mjpeg.h"
+#include "simulate.h"
 
 #ifdef __linux__
 #include <fcntl.h>
@@ -86,6 +87,42 @@ private:
     QElapsedTimer clock_;
     int next_ = 0, seq_ = 0;
     double loopStart_ = 0;
+};
+
+// The simulator (core/simulate): a scenario drawn frame by frame and looped. Time is the scenario's: frames that
+// take longer to draw than their interval make the live view slower than real time, never the recorded times wrong.
+class SynthCamera : public Camera {
+public:
+    bool load(const QString& name, QString* error) {
+        if (!simPreset(name, &spec_)) {
+            if (error) *error = QStringLiteral("no simulator scenario %1").arg(name);
+            return false;
+        }
+        return true;
+    }
+    QString name() const override { return QStringLiteral("Simulator: %1").arg(spec_.title); }
+    std::vector<CameraMode> modes() const override { return {{spec_.width, spec_.height, spec_.fps}}; }
+    CameraMode mode() const override { return modes().front(); }
+    bool start(const CameraMode&, QString*) override {
+        clock_.start();
+        frame_ = 0;
+        return true;
+    }
+    bool grab(CameraFrame* out, QString*) override {
+        const double t = frame_ / spec_.fps;
+        const double due = t, now = clock_.nsecsElapsed() * 1e-9;
+        if (due > now) QThread::usleep(static_cast<unsigned long>((due - now) * 1e6));
+        out->jpeg = encodeJpeg(simFrame(spec_, std::fmod(t, spec_.seconds)), 90);
+        out->t = t;
+        out->sequence = frame_++;
+        return true;
+    }
+    void stop() override {}
+
+private:
+    SimSpec spec_;
+    QElapsedTimer clock_;
+    int frame_ = 0;
 };
 
 #ifdef __linux__
@@ -309,6 +346,8 @@ std::vector<CameraInfo> Camera::list(bool withDemo) {
         if (c.openDevice(dev, &err)) out.push_back({dev, c.name()});
     }
 #endif
+    if (withDemo)
+        for (const SimSpec& p : simPresets()) out.push_back({QStringLiteral("synth:") + p.name, QStringLiteral("Simulator: ") + p.title});
     const QString sim = qEnvironmentVariable("LIBREDROP_SIM_CAMERA");
     if (!sim.isEmpty()) out.push_back({QStringLiteral("sim:") + sim, QStringLiteral("Simulated: %1").arg(QFileInfo(sim).fileName())});
     if (withDemo && QFile::exists(QLatin1String(kDemo))) out.push_back({demoId(), QStringLiteral("Demo: example recording (water on glass)")});
@@ -316,6 +355,11 @@ std::vector<CameraInfo> Camera::list(bool withDemo) {
 }
 
 std::unique_ptr<Camera> Camera::open(const QString& id, QString* error) {
+    if (id.startsWith(QLatin1String("synth:"))) {
+        auto c = std::make_unique<SynthCamera>();
+        if (!c->load(id.mid(6), error)) return nullptr;
+        return c;
+    }
     if (id.startsWith(QLatin1String("sim:"))) {
         auto c = std::make_unique<SimCamera>();
         if (!c->load(id.mid(4), error)) return nullptr;

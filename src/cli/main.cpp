@@ -13,12 +13,15 @@
 #include <QStringList>
 #include <QDateTime>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <cstdio>
 
 #include "core/camera.h"
 #include "core/drop.h"
 #include "core/recorder.h"
+#include "core/simulate.h"
+#include "core/mjpeg.h"
 #include "core/thermo.h"
 #include "core/image.h"
 #include "core/pendant.h"
@@ -101,7 +104,8 @@ int main(int argc, char** argv) {
                            "[-o CSV] [--plot PNG] [--drops 2,3]\n"
                            "LibreDropCLI report TABLE.csv [--drops 2,3] [--plot PNG]\n"
                            "LibreDropCLI synth --theta DEG [--bond B] [--radius PX] [--tilt DEG] [--needle GAP_PX] -o FILE\n"
-                           "LibreDropCLI cameras | record OUT.mkv [--camera DEV] [--size WxH] [--seconds S] ..."));
+                           "LibreDropCLI cameras | record OUT.mkv [--camera DEV] [--size WxH] [--seconds S] ...\n"
+                           "LibreDropCLI simulate PRESET -o OUT.mkv (simulated drops with the true values; no PRESET: list)"));
         return a.isEmpty() ? 1 : 0;
     }
     if (a[0] == QLatin1String("cameras")) {   // cameras, their modes and settings
@@ -187,6 +191,54 @@ int main(int argc, char** argv) {
                 .arg(rec.frames() ? bytes / 1024.0 / rec.frames() : 0, 0, 'f', 1).arg(darkest, 0, 'f', 0).arg(brightest, 0, 'f', 0)
                 .arg(m.w).arg(m.h));
         return rec.frames() > 0 && err2.isEmpty() ? 0 : 1;
+    }
+    if (a[0] == QLatin1String("simulate")) {   // a simulated recording with the true values
+        ld::SimSpec sp;
+        if (a.size() < 2 || a[1].startsWith(QLatin1String("--")) || !ld::simPreset(a[1], &sp)) {
+            out(QStringLiteral("LibreDropCLI simulate PRESET -o OUT.mkv [--seconds S] [--fps F] [--seed N] [--truth TRUTH.csv]\npresets:"));
+            for (const ld::SimSpec& p : ld::simPresets()) out(QStringLiteral("  %1  %2").arg(p.name, -14).arg(p.title));
+            return 1;
+        }
+        if (a.contains(QStringLiteral("--seconds"))) sp.seconds = arg(a, "--seconds").toDouble();
+        if (a.contains(QStringLiteral("--fps"))) sp.fps = arg(a, "--fps").toDouble();
+        if (a.contains(QStringLiteral("--seed"))) sp.seed = arg(a, "--seed").toUInt();
+        const QString file = arg(a, "-o", sp.name + QStringLiteral(".mkv"));
+        QString truthFile = arg(a, "--truth");
+        if (truthFile.isEmpty()) truthFile = file.left(file.lastIndexOf(QLatin1Char('.'))) + QStringLiteral("_truth.csv");
+        ld::MjpegWriter w;
+        QString err;
+        if (!w.open(file, sp.width, sp.height, &err)) { out(err); return 1; }
+        QFile tf(truthFile);
+        if (!tf.open(QIODevice::WriteOnly | QIODevice::Text)) { out(QStringLiteral("cannot write ") + truthFile); return 1; }
+        tf.write("time_s,on_surface,theta_deg,base_mm,height_mm,volume_ul,contact_left_px,contact_right_px,baseline_y_px\n");
+        const int n = int(std::lround(sp.seconds * sp.fps));
+        for (int i = 0; i < n; ++i) {
+            const double t = i / sp.fps;
+            ld::SimTruth tr;
+            const ld::GrayImage im = ld::simFrame(sp, t, &tr);
+            w.add(ld::encodeJpeg(im, 92), t);
+            tf.write(QStringLiteral("%1,%2,%3,%4,%5,%6,%7,%8,%9\n").arg(t, 0, 'f', 4).arg(int(tr.onSurface)).arg(tr.thetaDeg, 0, 'f', 3)
+                         .arg(tr.baseMm, 0, 'f', 4).arg(tr.heightMm, 0, 'f', 4).arg(tr.volumeUl, 0, 'f', 4)
+                         .arg(tr.contactLeftX, 0, 'f', 2).arg(tr.contactRightX, 0, 'f', 2).arg(tr.baselineY, 0, 'f', 2).toUtf8());
+            if (i % 30 == 0) std::fprintf(stderr, "\r%d/%d frames", i, n);
+        }
+        std::fprintf(stderr, "\r%d/%d frames\n", n, n);
+        w.finish();
+        QJsonObject meta, sample;
+        meta[QStringLiteral("device")] = QStringLiteral("Simulator: ") + sp.title;
+        meta[QStringLiteral("size")] = QStringLiteral("%1x%2").arg(sp.width).arg(sp.height);
+        meta[QStringLiteral("fps_requested")] = sp.fps;
+        meta[QStringLiteral("frames")] = n;
+        meta[QStringLiteral("started")] = QDateTime::currentDateTime().toString(Qt::ISODateWithMs);
+        meta[QStringLiteral("note")] = QStringLiteral("simulated (%1, seed %2); true values in %3").arg(sp.name).arg(sp.seed).arg(QFileInfo(truthFile).fileName());
+        sample[QStringLiteral("sample")] = QStringLiteral("sim ") + sp.name;
+        sample[QStringLiteral("liquid")] = QStringLiteral("Water");
+        sample[QStringLiteral("volume_ul")] = sp.volumeUl;
+        meta[QStringLiteral("sample")] = sample;
+        QFile jf(file.left(file.lastIndexOf(QLatin1Char('.'))) + QStringLiteral(".json"));
+        if (jf.open(QIODevice::WriteOnly)) jf.write(QJsonDocument(meta).toJson());
+        out(file + QStringLiteral("  (true values: ") + truthFile + QStringLiteral(")"));
+        return 0;
     }
     if (a[0] == QLatin1String("synth")) {
         ld::SynthDrop d;

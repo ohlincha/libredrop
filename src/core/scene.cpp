@@ -252,23 +252,67 @@ bool domed(const std::vector<int>& top, const std::vector<double>& ref, int x0, 
     return n && mx >= 1.15 * sum / n && at > x0 + w / 6 && at < x1 - w / 6;
 }
 
-// A drop's own baseline on an opaque sample: the line through the sample's edge (without fibres) just beyond the
-// drop's two ends, where its contact points are; further out the sample may curl away.
-Baseline localBaseline(const std::vector<double>& ref, int x0, int x1) {
-    const int w = int(ref.size());
-    auto level = [&](int from, int to) {   // median of the reference over [from, to]
-        std::vector<double> v;
-        for (int x = std::max(0, from); x <= std::min(w - 1, to); ++x) v.push_back(ref[std::size_t(x)]);
-        if (v.empty()) return std::nan("");
-        std::nth_element(v.begin(), v.begin() + long(v.size() / 2), v.end());
-        return v[v.size() / 2];
+// The drop's contact points on an opaque sample, from its own outline: from the top of the drop outwards the edge
+// first falls steeply (the drop's side), then flattens onto the sample; the contact is where it flattens. The bump's
+// ends found against the reference may include the sample's own crests next to the drop (wavy sheet).
+void contactEnds(const std::vector<int>& top, int x0, int x1, int* cx0, int* cx1) {
+    const int w = int(top.size());
+    std::vector<double> sm(top.size());   // the edge, median of 5 (fibres)
+    for (int x = 0; x < w; ++x) {
+        int v[5], n = 0;
+        for (int k = std::max(0, x - 2); k <= std::min(w - 1, x + 2); ++k)
+            if (top[std::size_t(k)] > 0) v[n++] = top[std::size_t(k)];
+        std::sort(v, v + n);
+        sm[std::size_t(x)] = n ? v[n / 2] : -1;
+    }
+    int apex = x0;
+    for (int x = x0; x <= x1; ++x)
+        if (sm[std::size_t(x)] > 0 && (sm[std::size_t(apex)] <= 0 || sm[std::size_t(x)] < sm[std::size_t(apex)])) apex = x;
+    const int d = 4, lo = std::max(d, x0 - 40), hi = std::min(w - 1 - d, x1 + 40);
+    *cx0 = x0, *cx1 = x1;
+    auto fall = [&](int x, int dir) {   // how steeply the edge falls going outwards (dir −1: left, +1: right)
+        return (sm[std::size_t(x + dir * d)] - sm[std::size_t(x - dir * d)]) / (2.0 * d);
     };
-    double yl = level(x0 - 40, x0 - 3), yr = level(x1 + 3, x1 + 40);
+    // each side: the steepest point of the drop's flank, then outwards until the edge is flat (the sample)
+    int sx = -1;
+    double best = 0.15;
+    for (int x = apex - 1; x >= lo; --x)
+        if (fall(x, -1) > best) best = fall(x, -1), sx = x;
+    if (sx >= 0)
+        for (int x = sx; x >= lo; --x)
+            if (fall(x, -1) < 0.07) {
+                *cx0 = x;
+                break;
+            }
+    sx = -1, best = 0.15;
+    for (int x = apex + 1; x <= hi; ++x)
+        if (fall(x, 1) > best) best = fall(x, 1), sx = x;
+    if (sx >= 0)
+        for (int x = sx; x <= hi; ++x)
+            if (fall(x, 1) < 0.07) {
+                *cx1 = x;
+                break;
+            }
+}
+
+// The baseline under a drop from the sample's edge just outside its contact points (the lower of the edge there:
+// fibres stick up).
+Baseline edgeBaseline(const std::vector<int>& top, int cx0, int cx1) {
+    const int w = int(top.size());
+    auto level = [&](int from, int to) {
+        std::vector<int> v;
+        for (int x = std::max(0, from); x <= std::min(w - 1, to); ++x)
+            if (top[std::size_t(x)] > 0) v.push_back(top[std::size_t(x)]);
+        if (v.empty()) return std::nan("");
+        std::sort(v.begin(), v.end());
+        return double(v[v.size() * 3 / 4]);
+    };
+    double yl = level(cx0 - 30, cx0 - 4), yr = level(cx1 + 4, cx1 + 30);
     if (!std::isfinite(yl)) yl = yr;
     if (!std::isfinite(yr)) yr = yl;
-    const double xl = x0 - 20, xr = x1 + 20, b = (yr - yl) / (xr - xl);
+    const double xl = cx0 - 17, xr = cx1 + 17, b = (yr - yl) / (xr - xl);
     Baseline out;
-    out.p0 = {0.5 * (x0 + x1), yl + b * (0.5 * (x0 + x1) - xl)};
+    out.p0 = {0.5 * (cx0 + cx1), yl + b * (0.5 * (cx0 + cx1) - xl)};
     out.angle = std::atan(b);
     out.found = true;
     out.reflection = false;
@@ -538,11 +582,11 @@ Scene analyzeScene(const GrayImage& im, const SceneOptions& opt) {
                 ++x;
                 continue;
             }
-            const int x0 = x;
+            int x0 = x;
             double rise = 0;
             int yTop = im.h;
             while (x < im.w && riseAt(x) > 1.5) rise = std::max(rise, riseAt(x)), yTop = std::min(yTop, top[std::size_t(x)]), ++x;
-            const int x1 = x - 1;
+            int x1 = x - 1;
             // (the sample's own bumps and fibres are low: a drop must stand clearly up)
             if (rise < std::max(opt.minHeightPx, 0.02 * im.h) || x1 - x0 + 1 < std::max(opt.minWidthPx, 0.04 * im.w) || x0 == 0 ||
                 x1 == im.w - 1)
@@ -555,7 +599,13 @@ Scene analyzeScene(const GrayImage& im, const SceneOptions& opt) {
             if (qEnvironmentVariableIsSet("LIBREDROP_DEBUG"))
                 qDebug("joined run %d..%d rise %.1f steep %d domed %d", x0, x1, rise, steepSide(top, ref, x0, x1), domed(top, ref, x0, x1));
             if (!steepSide(top, ref, x0, x1) || !domed(top, ref, x0, x1)) continue;   // a bulge or ridge of the sample
-            const Baseline lb = localBaseline(ref, x0, x1);
+            int cx0, cx1;
+            contactEnds(top, x0, x1, &cx0, &cx1);   // the drop itself, not the sample's crests beside it
+            if (cx1 - cx0 + 1 < std::max(opt.minWidthPx, 0.02 * im.w)) continue;
+            const Baseline lb = edgeBaseline(top, cx0, cx1);
+            if (qEnvironmentVariableIsSet("LIBREDROP_DEBUG"))
+                qDebug("  ends %d..%d -> contacts %d..%d, baseline y %.1f tilt %.2f", x0, x1, cx0, cx1, lb.p0.y, lb.angle * 180 / M_PI);
+            x0 = cx0, x1 = cx1;
             joined.push_back({bp, yTop == 0, false, {}, {}});
             joinedBase.push_back(lb);
             spans.push_back({&joined.back(), x0, x1, rise});

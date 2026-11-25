@@ -19,6 +19,7 @@ The user called the post-it "probably the hardest sample you will get": separato
 straight clean edge towards the camera, which the analysis handles reliably (a straight sample edge is used as
 the surface).
 
-Known weaknesses (expected failures in `tests/test_real.cpp`): Young–Laplace on post-it A at 18 s (54° instead of
-~90°) and 33 s (no fit), and post-it B at 88 s (18° instead of ~25°, the wet paper raised under the drop); the
-circle and height-width methods are right there.
+Fixed since (were expected failures in `tests/test_real.cpp`): Young–Laplace on post-it A at 18 s (54°, now 92°)
+and 33 s (no fit, now 55°), and post-it B at 88 s (18°, now 31°): each drop's contact points are now found from its
+own outline (steepest point of its flank, then outwards until the edge is flat) and its baseline from the sheet's
+edge just beyond them. Simulated versions of these substrates: `LibreDropCLI simulate curled-postit` (README).

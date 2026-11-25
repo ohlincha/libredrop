@@ -70,12 +70,12 @@ private slots:
         QTest::newRow("B 60 s YL") << "postit_B_60s_48deg.jpg" << "young-laplace" << 44.0 << 53.0 << false;
         QTest::newRow("B 60 s circle") << "postit_B_60s_48deg.jpg" << "circle" << 43.0 << 52.0 << false;
         QTest::newRow("B 88 s circle") << "postit_B_88s_wet.jpg" << "circle" << 20.0 << 34.0 << false;
-        QTest::newRow("B 88 s YL") << "postit_B_88s_wet.jpg" << "young-laplace" << 20.0 << 34.0 << true;    // 18°
+        QTest::newRow("B 88 s YL") << "postit_B_88s_wet.jpg" << "young-laplace" << 20.0 << 34.0 << false;   // was 18° (fixed: contacts from the drop's own outline)
         // first post-it drop: ~90-100° at 18 s (walls vertical, slight overhang), ~55-60° at 33 s
         QTest::newRow("A 18 s circle") << "postit_A_18s_drop.jpg" << "circle" << 80.0 << 100.0 << false;
-        QTest::newRow("A 18 s YL") << "postit_A_18s_drop.jpg" << "young-laplace" << 80.0 << 100.0 << true; // 54°
+        QTest::newRow("A 18 s YL") << "postit_A_18s_drop.jpg" << "young-laplace" << 80.0 << 100.0 << false; // was 54°
         QTest::newRow("A 33 s circle") << "postit_A_33s_spread.jpg" << "circle" << 50.0 << 65.0 << false;
-        QTest::newRow("A 33 s YL") << "postit_A_33s_spread.jpg" << "young-laplace" << 50.0 << 65.0 << true; // no fit
+        QTest::newRow("A 33 s YL") << "postit_A_33s_spread.jpg" << "young-laplace" << 50.0 << 65.0 << false; // was no fit
     }
     void postitDrop() {
         QFETCH(QString, file);

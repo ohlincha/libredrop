@@ -3,7 +3,8 @@
 // goniometer's send Motion-JPEG), so recording copies them into the video without re-encoding and keeps up at
 // 120 fps; each frame carries the driver's capture time.
 //
-// Backends: V4L2 (Linux), and a simulated camera that replays a Motion-JPEG recording in real time ("sim:<file>";
+// Backends: V4L2 (Linux), the simulator ("synth:<scenario>", core/simulate.h), and a camera that replays a
+// Motion-JPEG recording in real time ("sim:<file>";
 // the GUI offers the built-in example) for trying things out and testing without a camera. Windows and macOS have
 // only the simulated camera so far.
 //
