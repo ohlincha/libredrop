@@ -55,6 +55,8 @@ int main(int argc, char** argv) {
     const QStringList args = app.arguments();
     // the window (and the file given) after a short moment, so the splash can be seen
     QTimer::singleShot(1400, &w, [&] {
+        if (const QString sz = qEnvironmentVariable("LIBREDROP_SHOT_SIZE"); !sz.isEmpty())   // testing: WxH
+            w.resize(sz.section(QLatin1Char('x'), 0, 0).toInt(), sz.section(QLatin1Char('x'), 1, 1).toInt());
         w.show();
         splash.finish(&w);
         if (args.size() > 1 && args[1] == QLatin1String("--example")) w.openExample();

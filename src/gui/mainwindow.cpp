@@ -34,6 +34,7 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QDir>
+#include <QScrollBar>
 #include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
@@ -312,12 +313,15 @@ void MainWindow::buildUi() {
     auto* soakPage = new QWidget;
     auto* sp = new QVBoxLayout(soakPage);
     sp->setContentsMargins(4, 4, 4, 0);
-    auto* hr = new QHBoxLayout;
-    hr->addWidget(soakHint_, 1);
-    hr->addWidget(glassRef_, 0, Qt::AlignTop);
-    sp->addLayout(hr);
+    sp->addWidget(soakHint_);   // full width (wraps to fewer lines); its height follows the text (event filter)
+    soakHint_->installEventFilter(this);
+    sp->addWidget(glassRef_, 0, Qt::AlignRight);
+    soakTable_->setHeaderLabels({tr("Drop"), tr("θ at 0.1 s (°)"), tr("θ at 1 s (°)"), tr("θ at 10 s (°)"),
+                                 tr("Sorptivity (mm/√s)"), tr("R²"), tr("Absorbed after (s)")});
     sp->addWidget(soakTable_, 1);
     tabs_->addTab(soakPage, tr("Soaking"));
+    soakTable_->setMinimumHeight(100);   // header and a few drops, also in a short window
+    table_->setMinimumHeight(100);
     tl->addWidget(tabs_, 1);
     auto* checksScroll = new QScrollArea;
     checksScroll->setWidget(checks_);
@@ -334,13 +338,15 @@ void MainWindow::buildUi() {
     rsplit->addWidget(tableBox);
     rsplit->addWidget(plotBox);
     rsplit->setStretchFactor(1, 3);
+    rsplit->setChildrenCollapsible(false);
     rl->addWidget(rsplit, 1);
 
     auto* split = new QSplitter(Qt::Horizontal);
     split->addWidget(left);
     split->addWidget(right);
-    split->setStretchFactor(0, 3);
-    split->setStretchFactor(1, 2);
+    split->setStretchFactor(0, 1);   // a wider window widens the image; the panel stays as wide as its table
+    split->setStretchFactor(1, 0);
+    connect(split, &QSplitter::splitterMoved, this, [this] { panelDragged_ = true; });
     split_ = split;
     setCentralWidget(split);
     library_ = new LibraryPanel;
@@ -1036,8 +1042,23 @@ void MainWindow::fitTableWidth() {
     if (!split_ || split_->count() < 2) return;
     QWidget* side = split_->widget(1);
     for (int c = 0; c < table_->columnCount(); ++c) table_->resizeColumnToContents(c);
-    const int margins = side->width() - table_->viewport()->width();
-    side->setMinimumWidth(std::max(0, table_->header()->length() + 4 + margins));
+    // measured from the widgets around the table, not its viewport: that is tiny while another tab is in front
+    // (it used to make the panel a little wider after every analysis)
+    const int table = std::max(table_->header()->length(), soakTable_->header()->length()) + 2 * table_->frameWidth() +
+                      table_->verticalScrollBar()->sizeHint().width() + 8;   // + the tab page's margins
+    const int around = side->width() - tabs_->width();                        // the panel's own margins
+    const int need = std::max(0, table + std::max(0, around));
+    side->setMinimumWidth(need);
+    if (!panelDragged_ && side->width() > need + 60) {   // give the rest to the image (until the user drags the divider)
+        const int total = split_->sizes().value(0) + split_->sizes().value(1);
+        split_->setSizes({total - need - 20, need + 20});
+    }
+}
+
+bool MainWindow::eventFilter(QObject* o, QEvent* e) {
+    if (o == soakHint_ && e->type() == QEvent::Resize)   // a wrapped label is not given its height by the tab widget
+        soakHint_->setMinimumHeight(soakHint_->heightForWidth(soakHint_->width()));
+    return QMainWindow::eventFilter(o, e);
 }
 
 QList<int> MainWindow::chosenIds() const {

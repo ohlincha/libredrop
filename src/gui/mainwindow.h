@@ -39,6 +39,7 @@ protected:
     void closeEvent(QCloseEvent* e) override;
     void dragEnterEvent(QDragEnterEvent* e) override;
     void dropEvent(QDropEvent* e) override;
+    bool eventFilter(QObject* o, QEvent* e) override;
 
 private:
     void buildUi();
@@ -94,6 +95,7 @@ private:
     void loadEvaporation();                // the current liquid's stored value
     QSplitter* split_ = nullptr;   // frame | side panel
     void fitTableWidth();
+    bool panelDragged_ = false;     // the user set the divider: keep it
 public:
     void openCompare(const QStringList& files, const QStringList& samples = {});   // Compare samples (with these added)
     bool openProject(const QString& dir);
