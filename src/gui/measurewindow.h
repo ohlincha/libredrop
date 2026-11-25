@@ -5,6 +5,7 @@
 // main window opens and analyses them.
 #include <QFutureWatcher>
 #include <QImage>
+#include <QDateTime>
 #include <QJsonObject>
 #include <QThread>
 #include <QWidget>
@@ -103,7 +104,8 @@ private:
     void record();
     void recordingStopped(const QString& path, int frames, double seconds, double fps, int dropped, const QString& error);
     QString outputDir() const;
-    QString describeRecording(const QString& path, int frames, double seconds);
+    QString baseName(const QDateTime& when) const;   // the file name without .mkv
+    void updateName();
     void saveSettings() const;
 
     MeasureContext ctx_;
@@ -122,6 +124,8 @@ private:
     QDoubleSpinBox* pre_ = nullptr;
     QSpinBox* maxSeconds_ = nullptr;
     QLabel* folder_ = nullptr;
+    QLineEdit* name_ = nullptr;                           // own file name (empty: from the sample fields)
+    QLabel* nameShown_ = nullptr;
     QPushButton* folderButton_ = nullptr;
     QPushButton* record_ = nullptr;
     QCheckBox* analyse_ = nullptr;
