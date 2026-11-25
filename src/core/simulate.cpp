@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <thread>
 
 #include "younglaplace.h"
 
@@ -56,6 +57,18 @@ double pinnedAngle(const SimSpec& s, double halfBasePx, double volumeUl) {
     return 0.5 * (lo + hi);
 }
 
+// Rows [0, n) split over the processor's cores.
+template <class F>
+void parallelRows(int n, F f) {
+    const int k = std::clamp(int(std::thread::hardware_concurrency()), 1, 16);
+    std::vector<std::thread> th;
+    for (int i = 0; i < k; ++i)
+        th.emplace_back([=, &f] {
+            for (int y = n * i / k; y < n * (i + 1) / k; ++y) f(y);
+        });
+    for (std::thread& t : th) t.join();
+}
+
 double hash01(std::uint32_t a, std::uint32_t b) {
     std::uint32_t h = a * 2654435761u ^ (b + 0x9e3779b9u + (a << 6) + (a >> 2));
     h ^= h >> 16, h *= 0x7feb352du, h ^= h >> 15, h *= 0x846ca68bu, h ^= h >> 16;
@@ -106,6 +119,20 @@ std::vector<SimSpec> simPresets() {
         v.push_back(s);
     }
     return v;
+}
+
+SimSpec simScaled(const SimSpec& s, double f) {
+    SimSpec o = s;
+    o.width = int(std::lround(s.width * f)), o.height = int(std::lround(s.height * f));
+    o.pxPerMm = s.pxPerMm * f;
+    o.dropX = s.dropX * f;
+    SimSubstrate& u = o.sub;
+    for (double* v : {&u.surfaceY, &u.waveAmpPx, &u.waveLenPx, &u.curlPx, &u.ridgeX0, &u.ridgeX1, &u.ridgePx, &u.stepX, &u.stepPx,
+                      &u.liftX, &u.liftPx, &u.swellPx, &u.bandPx, &u.stageY})
+        *v *= f;
+    u.fibres = s.sub.fibres;   // per 100 px of the frame: as many fibres along the same edge would be denser; keep it simple
+    o.blurPx = s.blurPx * f;
+    return o;
 }
 
 bool simPreset(const QString& name, SimSpec* out) {
@@ -197,11 +224,19 @@ GrayImage simFrame(const SimSpec& s, double t, SimTruth* truthOut) {
     }
 
     const double light = s.background;
+    // the sample's edge per column (it depends on x only), interpolated for the sub-pixel samples
+    std::vector<double> edge(std::size_t(s.width) + 2);
+    for (int x = 0; x < s.width + 2; ++x) edge[std::size_t(x)] = surfaceAt(s, x - 1, t, sh.halfBase);
+    auto surf = [&](double x) {
+        const double f = std::clamp(x + 1, 0.0, double(s.width) + 0.999);
+        const int i = int(f);
+        return edge[std::size_t(i)] + (f - i) * (edge[std::size_t(std::min(i + 1, s.width + 1))] - edge[std::size_t(i)]);
+    };
     auto intensity = [&](double x, double y) -> double {
         double v = light * (1.0 - 0.06 * y / s.height);
         if (std::abs(x - cx) <= needleW / 2 && y <= needleTip) return s.dark;                   // needle
         if (pendantCy > -1e8 && std::hypot(x - cx, y - pendantCy) <= R) return s.dark;         // hanging drop
-        const double ys = surfaceAt(s, x, t, sh.halfBase);
+        const double ys = surf(x);
         if (tr.onSurface) {
             const double dx = x - cx, dy = y - by;
             const double along = dx * ca + dy * sa, up = -(-dx * sa + dy * ca);   // height above the drop's baseline
@@ -238,10 +273,11 @@ GrayImage simFrame(const SimSpec& s, double t, SimTruth* truthOut) {
     // pixels: the four corners decide; where they differ, 4×4 samples
     const int W = s.width, H = s.height;
     std::vector<float> corner(std::size_t(W + 1) * (H + 1));
-    for (int y = 0; y <= H; ++y)
+    parallelRows(H + 1, [&](int y) {
         for (int x = 0; x <= W; ++x) corner[std::size_t(y) * (W + 1) + x] = float(intensity(x - 0.5, y - 0.5));
+    });
     GrayImage im(W, H);
-    for (int y = 0; y < H; ++y)
+    parallelRows(H, [&](int y) {
         for (int x = 0; x < W; ++x) {
             const float a = corner[std::size_t(y) * (W + 1) + x], b = corner[std::size_t(y) * (W + 1) + x + 1];
             const float c = corner[std::size_t(y + 1) * (W + 1) + x], d = corner[std::size_t(y + 1) * (W + 1) + x + 1];
@@ -254,15 +290,44 @@ GrayImage simFrame(const SimSpec& s, double t, SimTruth* truthOut) {
                 for (int i = 0; i < 4; ++i) sum += intensity(x - 0.5 + (i + 0.5) / 4, y - 0.5 + (j + 0.5) / 4);
             im.at(x, y) = float(sum / 16);
         }
-    GrayImage out = s.blurPx > 0 ? gaussianBlur(im, s.blurPx) : im;
-    if (s.noise > 0) {   // portable noise, different in every frame
-        std::uint32_t st = s.seed * 2654435761u + std::uint32_t(std::lround(t * 1000)) * 40503u + 12345u;
-        auto uni = [&st] {
-            st = st * 1664525u + 1013904223u;
-            return (st + 0.5) / 4294967296.0;
-        };
-        for (float& v : out.px) v = float(std::clamp(v + s.noise * std::sqrt(-2 * std::log(uni())) * std::cos(2 * M_PI * uni()), 0.0, 255.0));
+    });
+    // the lens: a Gaussian blur, separable, over all cores
+    GrayImage out = im;
+    if (s.blurPx > 0) {
+        const int r = std::max(1, int(std::ceil(3 * s.blurPx)));
+        std::vector<float> k(std::size_t(2 * r + 1));
+        float ks = 0;
+        for (int i = -r; i <= r; ++i) ks += k[std::size_t(i + r)] = float(std::exp(-0.5 * i * i / (s.blurPx * s.blurPx)));
+        for (float& v : k) v /= ks;
+        GrayImage tmp(W, H);
+        parallelRows(H, [&](int y) {
+            const float* in = &im.px[std::size_t(y) * W];
+            float* o = &tmp.px[std::size_t(y) * W];
+            for (int x = 0; x < W; ++x) {
+                float a = 0;
+                for (int i = -r; i <= r; ++i) a += k[std::size_t(i + r)] * in[std::clamp(x + i, 0, W - 1)];
+                o[x] = a;
+            }
+        });
+        parallelRows(H, [&](int y) {
+            float* o = &out.px[std::size_t(y) * W];
+            for (int x = 0; x < W; ++x) {
+                float a = 0;
+                for (int i = -r; i <= r; ++i) a += k[std::size_t(i + r)] * tmp.px[std::size_t(std::clamp(y + i, 0, H - 1)) * W + x];
+                o[x] = a;
+            }
+        });
     }
+    if (s.noise > 0)   // sensor noise, different in every frame; each row its own generator (the same on any machine)
+        parallelRows(H, [&](int y) {
+            std::uint32_t st = s.seed * 2654435761u + std::uint32_t(std::lround(t * 1000)) * 40503u + std::uint32_t(y) * 2246822519u + 12345u;
+            float* row = &out.px[std::size_t(y) * W];
+            for (int x = 0; x < W; ++x) {
+                float g = 0;   // sum of four uniforms: nearly Gaussian, variance 4/12
+                for (int i = 0; i < 4; ++i) st = st * 1664525u + 1013904223u, g += float(st >> 8) * (1.0f / 16777216.0f);
+                row[x] = std::clamp(row[x] + float(s.noise) * (g - 2.0f) * 1.7320508f, 0.0f, 255.0f);
+            }
+        });
     return out;
 }
 

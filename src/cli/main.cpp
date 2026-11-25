@@ -195,13 +195,14 @@ int main(int argc, char** argv) {
     if (a[0] == QLatin1String("simulate")) {   // a simulated recording with the true values
         ld::SimSpec sp;
         if (a.size() < 2 || a[1].startsWith(QLatin1String("--")) || !ld::simPreset(a[1], &sp)) {
-            out(QStringLiteral("LibreDropCLI simulate PRESET -o OUT.mkv [--seconds S] [--fps F] [--seed N] [--truth TRUTH.csv]\npresets:"));
+            out(QStringLiteral("LibreDropCLI simulate PRESET -o OUT.mkv [--seconds S] [--fps F] [--seed N] [--half] [--truth TRUTH.csv]\npresets:"));
             for (const ld::SimSpec& p : ld::simPresets()) out(QStringLiteral("  %1  %2").arg(p.name, -14).arg(p.title));
             return 1;
         }
         if (a.contains(QStringLiteral("--seconds"))) sp.seconds = arg(a, "--seconds").toDouble();
         if (a.contains(QStringLiteral("--fps"))) sp.fps = arg(a, "--fps").toDouble();
         if (a.contains(QStringLiteral("--seed"))) sp.seed = arg(a, "--seed").toUInt();
+        if (a.contains(QStringLiteral("--half"))) sp = ld::simScaled(sp, 0.5);
         const QString file = arg(a, "-o", sp.name + QStringLiteral(".mkv"));
         QString truthFile = arg(a, "--truth");
         if (truthFile.isEmpty()) truthFile = file.left(file.lastIndexOf(QLatin1Char('.'))) + QStringLiteral("_truth.csv");

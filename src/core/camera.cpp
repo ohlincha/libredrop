@@ -94,16 +94,21 @@ private:
 class SynthCamera : public Camera {
 public:
     bool load(const QString& name, QString* error) {
-        if (!simPreset(name, &spec_)) {
+        if (!simPreset(name, &base_)) {
             if (error) *error = QStringLiteral("no simulator scenario %1").arg(name);
             return false;
         }
+        spec_ = base_;
         return true;
     }
-    QString name() const override { return QStringLiteral("Simulator: %1").arg(spec_.title); }
-    std::vector<CameraMode> modes() const override { return {{spec_.width, spec_.height, spec_.fps}}; }
-    CameraMode mode() const override { return modes().front(); }
-    bool start(const CameraMode&, QString*) override {
+    QString name() const override { return QStringLiteral("Simulator: %1").arg(base_.title); }
+    // full size, and half size (a quarter of the drawing: keeps up with 30 fps on any machine)
+    std::vector<CameraMode> modes() const override {
+        return {{base_.width, base_.height, base_.fps}, {base_.width / 2, base_.height / 2, base_.fps}};
+    }
+    CameraMode mode() const override { return {spec_.width, spec_.height, spec_.fps}; }
+    bool start(const CameraMode& m, QString*) override {
+        spec_ = m.w > 0 && m.w < base_.width ? simScaled(base_, double(m.w) / base_.width) : base_;
         clock_.start();
         frame_ = 0;
         return true;
@@ -120,7 +125,7 @@ public:
     void stop() override {}
 
 private:
-    SimSpec spec_;
+    SimSpec base_, spec_;
     QElapsedTimer clock_;
     int frame_ = 0;
 };

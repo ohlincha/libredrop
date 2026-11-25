@@ -61,6 +61,8 @@ struct SimTruth {
 
 // The scenarios offered (name: short id for the CLI and the simulated camera; title: for people).
 std::vector<SimSpec> simPresets();
+// The same scenario seen by a smaller camera mode: every length in pixels times f (the scale too).
+SimSpec simScaled(const SimSpec& s, double f);
 bool simPreset(const QString& name, SimSpec* out);
 
 // The drop's state at time t (s from the start of the video).

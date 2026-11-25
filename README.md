@@ -66,7 +66,7 @@ it touches, spreads, soaks in (volume falling as √t with the contact line pinn
 `LibreDropCLI simulate SCENARIO -o out.mkv [--seconds S] [--fps F]` writes a recording with its true values
 (`out_truth.csv`: angle, base, height, volume, contact points per frame); analyse it and compare. The tests do
 this for every scenario (tests/test_simulate.cpp). Drawing a 1080p frame takes about 0.2 s, so the simulated live
-view runs slower than real time (its recorded times are the simulation's).
+view may run slower than real time on a busy machine (its recorded times are the simulation's); the half-size mode (960×540) keeps up with 30 fps.
 
 ## Measuring separators (soaking)
 
