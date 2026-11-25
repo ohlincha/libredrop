@@ -5,6 +5,10 @@
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDateTime>
+#include <QDesktopServices>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QUrl>
 #include <QDir>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
@@ -267,7 +271,8 @@ MeasureWindow::MeasureWindow(MeasureContext ctx, QWidget* parent) : QWidget(pare
     maxSeconds_->setSpecialValueText(tr("when I press Stop"));
     maxSeconds_->setValue(st.value(QStringLiteral("measure/maxSeconds"), 0).toInt());
     folder_ = new QLabel;
-    folder_->setMinimumWidth(120);
+    folder_->setWordWrap(true);
+    folder_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     folderButton_ = new QPushButton(tr("Folder…"));
     chosenDir_ = st.value(QStringLiteral("measure/folder"),
                           QDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)).filePath(QStringLiteral("LibreDrop")))
@@ -286,7 +291,16 @@ MeasureWindow::MeasureWindow(MeasureContext ctx, QWidget* parent) : QWidget(pare
     rForm->addRow(tr("Stop"), maxSeconds_);
     auto* fRow = new QHBoxLayout;
     fRow->addWidget(folder_, 1);
-    fRow->addWidget(folderButton_);
+    auto* fButtons = new QVBoxLayout;
+    fButtons->addWidget(folderButton_);
+    auto* openFolder = new QPushButton(tr("Open"));
+    openFolder->setToolTip(tr("Show the folder in the file manager"));
+    connect(openFolder, &QPushButton::clicked, this, [this] {
+        QDir().mkpath(outputDir());
+        QDesktopServices::openUrl(QUrl::fromLocalFile(outputDir()));
+    });
+    fButtons->addWidget(openFolder);
+    fRow->addLayout(fButtons);
     rForm->addRow(tr("Save in"), fRow);
     rForm->addRow(analyse_);
     rForm->addRow(record_);
@@ -363,7 +377,7 @@ void MeasureWindow::refreshSamples() {
     folderButton_->setVisible(!project);
     const QString full = QDir::toNativeSeparators(outputDir());
     folder_->setToolTip(full);
-    folder_->setText(project ? tr("the project's recordings folder") : folder_->fontMetrics().elidedText(full, Qt::ElideMiddle, 220));
+    folder_->setText(project ? tr("%1 (the project)").arg(full) : full);
 }
 
 QString MeasureWindow::outputDir() const {
@@ -618,9 +632,108 @@ void MeasureWindow::recordingStopped(const QString& path, int frames, double sec
             if (jf.open(QIODevice::WriteOnly | QIODevice::Truncate)) jf.write(QJsonDocument(o).toJson());
         }
     }
+    const QString kept = describeRecording(path, frames, seconds);
     note_->clear();
-    if (ctx_.recorded) ctx_.recorded(path, analyse_->isChecked());
+    if (!kept.isEmpty() && ctx_.recorded) ctx_.recorded(kept, analyse_->isChecked());
     refreshSamples();
+}
+
+// After each recording: where it is, and what it is (filled in from the panel; changes go into the .json and the
+// file name). Returns the recording's path (renamed), or "" if it was discarded.
+QString MeasureWindow::describeRecording(const QString& path, int frames, double seconds) {
+    QDialog d(this);
+    d.setWindowTitle(tr("Recording saved"));
+    auto* form = new QFormLayout(&d);
+    const QFileInfo fi(path);
+    auto* where = new QLabel(tr("<b>%1</b><br>in %2<br>%3 frames, %4 s")
+                                 .arg(fi.fileName().toHtmlEscaped(), QDir::toNativeSeparators(fi.absolutePath()).toHtmlEscaped())
+                                 .arg(frames).arg(seconds, 0, 'f', 1));
+    where->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    where->setWordWrap(true);
+    auto* openFolder = new QPushButton(tr("Open folder"));
+    connect(openFolder, &QPushButton::clicked, &d, [fi] { QDesktopServices::openUrl(QUrl::fromLocalFile(fi.absolutePath())); });
+    auto* whereRow = new QHBoxLayout;
+    whereRow->addWidget(where, 1);
+    whereRow->addWidget(openFolder, 0, Qt::AlignTop);
+    form->addRow(tr("Saved as"), whereRow);
+    auto copy = [](QComboBox* from) {
+        auto* c = new QComboBox;
+        c->setEditable(true);
+        for (int i = 0; i < from->count(); ++i) c->addItem(from->itemText(i));
+        c->setCurrentText(from->currentText());
+        return c;
+    };
+    QComboBox* sample = copy(sample_);
+    QComboBox* side = copy(side_);
+    QComboBox* direction = copy(direction_);
+    QComboBox* liquid = copy(liquid_);
+    auto* volume = new QDoubleSpinBox;
+    volume->setRange(0, 100), volume->setDecimals(1), volume->setSuffix(tr(" µL")), volume->setSpecialValueText(tr("not noted"));
+    volume->setValue(volume_->value());
+    auto* control = new QCheckBox(tr("Control or reference sample (glass, PTFE, …)"));
+    control->setChecked(control_->isChecked());
+    auto* note = new QLineEdit(note_->text());
+    note->setPlaceholderText(tr("what happened, anything unusual"));
+    form->addRow(new QLabel(tr("What was measured? (stored with the recording; the sample name files it in the project)")));
+    form->addRow(tr("Sample"), sample);
+    form->addRow(tr("Side"), side);
+    form->addRow(tr("Direction"), direction);
+    form->addRow(tr("Liquid"), liquid);
+    form->addRow(tr("Volume"), volume);
+    form->addRow(control);
+    form->addRow(tr("Note"), note);
+    auto* bb = new QDialogButtonBox;
+    QPushButton* save = bb->addButton(tr("Save"), QDialogButtonBox::AcceptRole);
+    QPushButton* discard = bb->addButton(tr("Delete recording"), QDialogButtonBox::DestructiveRole);
+    save->setDefault(true);
+    bool del = false;
+    connect(save, &QPushButton::clicked, &d, &QDialog::accept);
+    connect(discard, &QPushButton::clicked, &d, [&] {
+        if (QMessageBox::question(&d, tr("Delete recording"), tr("Delete %1?").arg(fi.fileName())) == QMessageBox::Yes) {
+            del = true;
+            d.reject();
+        }
+    });
+    form->addRow(bb);
+    if (sample->currentText().trimmed().isEmpty()) sample->setFocus();
+    d.exec();   // closing the dialog keeps the recording as it is
+    const QString json = fi.dir().filePath(fi.completeBaseName() + QStringLiteral(".json"));
+    if (del) {
+        QFile::remove(path);
+        QFile::remove(json);
+        status_->setText(tr("Recording deleted."));
+        return {};
+    }
+    if (d.result() != QDialog::Accepted) return path;
+    // for the next recording too
+    sample_->setCurrentText(sample->currentText()), side_->setCurrentText(side->currentText());
+    direction_->setCurrentText(direction->currentText()), liquid_->setCurrentText(liquid->currentText());
+    volume_->setValue(volume->value()), control_->setChecked(control->isChecked());
+    QFile jf(json);
+    QJsonObject o;
+    if (jf.open(QIODevice::ReadOnly)) o = QJsonDocument::fromJson(jf.readAll()).object(), jf.close();
+    QJsonObject smp;
+    auto put = [&smp](const char* k, const QString& v) {
+        if (!v.trimmed().isEmpty()) smp[QLatin1String(k)] = v.trimmed();
+    };
+    put("sample", sample->currentText()), put("side", side->currentText()), put("direction", direction->currentText());
+    put("liquid", shortLiquid(liquid->currentText()));
+    if (volume->value() > 0) smp[QStringLiteral("volume_ul")] = volume->value();
+    if (control->isChecked()) smp[QStringLiteral("control")] = true;
+    o[QStringLiteral("sample")] = smp;
+    o[QStringLiteral("note")] = note->text();
+    if (jf.open(QIODevice::WriteOnly | QIODevice::Truncate)) jf.write(QJsonDocument(o).toJson()), jf.close();
+    // the file name follows the sample (the date and time stay)
+    const QString stamp = fi.completeBaseName().right(15);   // yyyyMMdd_HHmmss
+    QString base = ld::recordingName(shortLiquid(liquid->currentText()), sample->currentText(), side->currentText(),
+                                     direction->currentText(), QDateTime::fromString(stamp, QStringLiteral("yyyyMMdd_HHmmss")));
+    if (base == fi.completeBaseName() || !QDateTime::fromString(stamp, QStringLiteral("yyyyMMdd_HHmmss")).isValid()) return path;
+    QString to = fi.dir().filePath(base + QStringLiteral(".mkv"));
+    for (int k = 2; QFileInfo::exists(to); ++k) to = fi.dir().filePath(QStringLiteral("%1_%2.mkv").arg(base).arg(k));
+    if (!QFile::rename(path, to)) return path;
+    QFile::rename(json, QFileInfo(to).dir().filePath(QFileInfo(to).completeBaseName() + QStringLiteral(".json")));
+    status_->setText(tr("Saved %1 in %2").arg(QFileInfo(to).fileName(), QDir::toNativeSeparators(fi.absolutePath())));
+    return to;
 }
 
 void MeasureWindow::saveSettings() const {

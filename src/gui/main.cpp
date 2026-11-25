@@ -122,6 +122,8 @@ int main(int argc, char** argv) {
             if (qEnvironmentVariableIsSet("LIBREDROP_MEASURE") && !qEnvironmentVariableIsSet("LIBREDROP_SHOT_MAIN"))
                 for (QWidget* t : QApplication::topLevelWidgets())
                     if (t->windowTitle().startsWith(QStringLiteral("Measure")) && t->isVisible()) target = t;
+            for (QWidget* t : QApplication::topLevelWidgets())   // a dialog on top of it
+                if (qobject_cast<QDialog*>(t) && t->isVisible()) target = t;
             target->grab().save(shot.section(QLatin1Char(','), 0, 0));
             w.close();
         });

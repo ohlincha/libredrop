@@ -103,6 +103,7 @@ private:
     void record();
     void recordingStopped(const QString& path, int frames, double seconds, double fps, int dropped, const QString& error);
     QString outputDir() const;
+    QString describeRecording(const QString& path, int frames, double seconds);
     void saveSettings() const;
 
     MeasureContext ctx_;
