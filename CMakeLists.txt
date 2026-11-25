@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(LibreDrop VERSION 0.2.11 LANGUAGES CXX)
+project(LibreDrop VERSION 0.2.12 LANGUAGES CXX)
 
 # LibreDrop: contact angle and drop shape analysis for the Ossila goniometer (and any backlit side view).
 # Layout:  src/core  analysis library (Qt Core + Gui for images, Eigen)
