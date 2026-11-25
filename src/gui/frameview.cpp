@@ -21,7 +21,7 @@ void FrameView::setFrame(const QImage& image, const std::optional<ld::Scene>& sc
     image_ = image;
     scene_ = scene;
     ids_ = ids;
-    if (newSize) mode_ = Mode::Drops, view_ = {};
+    if (newSize) mode_ = autoZoom_ ? Mode::Drops : Mode::Whole, view_ = {};
     updateAutoView();
     update();
 }
@@ -33,6 +33,14 @@ void FrameView::setChosen(const QList<int>& ids) {
 
 void FrameView::setMessage(const QString& text) {
     message_ = text;
+    update();
+}
+
+void FrameView::setAutoZoom(bool on) {
+    autoZoom_ = on;
+    mode_ = on ? Mode::Drops : Mode::Whole;
+    view_ = {};
+    updateAutoView();
     update();
 }
 
@@ -142,6 +150,27 @@ void FrameView::paintEvent(QPaintEvent*) {
     if (!scene_ || !scene_->ok) return;
     p.setRenderHint(QPainter::Antialiasing);
     auto map = [&](double x, double y) { return toWidget(x, y); };
+    if (!autoZoom_) {   // live camera: a thin box around each drop and its angle, nothing else
+        const ld::Baseline& b = scene_->surface;
+        for (const ld::SceneDrop& d : scene_->drops) {
+            double top = 1e18;
+            for (const ld::Pt& q : d.a.outline) top = std::min(top, q.y);
+            const double base = b.p0.y + std::tan(b.angle) * (d.xc - b.p0.x);
+            if (top > base) top = base - 4;
+            const QRectF r(map(d.x0 - 6, top - 6), map(d.x1 + 6, base + 3));
+            p.setPen(QPen(QColor(255, 255, 255, 170), 1));
+            p.setBrush(Qt::NoBrush);
+            p.drawRect(r);
+            const ld::AngleResult* m = d.a.method(QStringLiteral("young-laplace"));
+            if (!m || !m->ok) m = d.a.method(QStringLiteral("tangent"));
+            if (m && m->ok) {
+                const QString t = QStringLiteral("%1°").arg(m->mean(), 0, 'f', 0);
+                p.setPen(QColor(255, 255, 255, 210));
+                p.drawText(r.topLeft() + QPointF(2, -4), t);
+            }
+        }
+        return;
+    }
     const ld::Baseline& bl = scene_->surface;
     const double tn = std::tan(bl.angle);
     p.setPen(QPen(QColor(255, 200, 0), 1.2, Qt::DashLine));
@@ -253,7 +282,7 @@ void FrameView::mouseMoveEvent(QMouseEvent* e) {
 }
 
 void FrameView::mouseReleaseEvent(QMouseEvent* e) {
-    if (dragged_ || !scene_ || image_.isNull()) return;
+    if (dragged_ || !scene_ || image_.isNull() || !autoZoom_) return;   // live: a click never moves the view
     const QPointF q = toImage(e->position());
     for (int i = 0; i < int(scene_->drops.size()); ++i) {
         const ld::SceneDrop& d = scene_->drops[std::size_t(i)];
@@ -269,7 +298,7 @@ void FrameView::mouseReleaseEvent(QMouseEvent* e) {
 }
 
 void FrameView::mouseDoubleClickEvent(QMouseEvent*) {
-    mode_ = mode_ == Mode::Whole ? Mode::Drops : Mode::Whole;
+    mode_ = mode_ == Mode::Whole && autoZoom_ ? Mode::Drops : Mode::Whole;
     view_ = {};
     updateAutoView();
     update();

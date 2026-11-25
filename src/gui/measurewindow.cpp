@@ -183,6 +183,7 @@ MeasureWindow::MeasureWindow(MeasureContext ctx, QWidget* parent) : QWidget(pare
 
     view_ = new FrameView;
     view_->setMessage(tr("Choose a camera"));
+    view_->setAutoZoom(false);   // the whole frame, steady; wheel/drag to look closer, double-click for all of it
 
     camera_ = new QComboBox;
     auto* refresh = new QPushButton(tr("Look again"));
@@ -198,7 +199,7 @@ MeasureWindow::MeasureWindow(MeasureContext ctx, QWidget* parent) : QWidget(pare
                              "Raise it if the image is dark; it must be shorter than one frame (8 ms at 120 fps).</p>"
                              "<p>The other camera settings are Ossila's (gain 0, gamma 72, contrast 32, …).</p>"));
     live_ = new QCheckBox(tr("Find drops in the live image"));
-    live_->setChecked(st.value(QStringLiteral("measure/live"), true).toBool());
+    live_->setChecked(st.value(QStringLiteral("measure/live2"), false).toBool());
     live_->setToolTip(tr("Show the surface, the drop outline and the angle while you set up (slows the live view a little)."));
 
     auto* camBox = new QGroupBox(tr("Camera"));
@@ -470,6 +471,8 @@ void MeasureWindow::frameReady() {
         if (analyse && p.mean > 15) {
             ld::SceneOptions o = opts ? opts(g.w) : ld::SceneOptions{};
             o.drop.staticMeasurement = false;
+            o.minHeightPx = std::max(o.minHeightPx, 0.015 * g.h);   // live: only drops that clearly stand up, not specks
+            o.minWidthPx = std::max(o.minWidthPx, 0.03 * g.w);
             p.scene = ld::analyzeScene(g, o);
         }
         return p;
@@ -591,7 +594,7 @@ void MeasureWindow::saveSettings() const {
     st.setValue(QStringLiteral("measure/camera"), camera_->currentData());
     if (mode_->count()) st.setValue(QStringLiteral("measure/mode/") + camera_->currentData().toString(), mode_->currentText());
     st.setValue(QStringLiteral("measure/exposureMs"), exposure_->value());
-    st.setValue(QStringLiteral("measure/live"), live_->isChecked());
+    st.setValue(QStringLiteral("measure/live2"), live_->isChecked());
     st.setValue(QStringLiteral("measure/sample"), sample_->currentText());
     st.setValue(QStringLiteral("measure/side"), side_->currentText());
     st.setValue(QStringLiteral("measure/direction"), direction_->currentText());

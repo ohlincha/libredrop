@@ -21,6 +21,7 @@ public:
     void setChosen(const QList<int>& ids);   // empty: all
     void setMessage(const QString& text);    // shown when there is no image
     void resetView();                        // back to the drops (new file)
+    void setAutoZoom(bool on);               // off: whole frame, never zooms by itself (live camera)
     QSize sizeHint() const override { return {960, 520}; }
 
 signals:
@@ -55,4 +56,5 @@ private:
     QPointF dragStart_;
     QRectF dragView_;
     bool dragged_ = false;
+    bool autoZoom_ = true;
 };
