@@ -49,7 +49,7 @@ Open **File ▸ Measure with the camera…** (Ctrl+M), or press **Measure…** i
 ![The Measure window (here with the simulator as camera)](manual-measure.png)
 
 1. **Camera.** Choose the goniometer camera in the *Camera* list (press *Look again* if you plugged it in after
-   opening the window). *Size and rate*: 640 × 480 at 120 fps for liquids that soak in within a second or two,
+   opening the window). *Size and rate*: 640 × 480 (the camera says 120 fps; it delivers about 99) for liquids that soak in within a second or two,
    otherwise the larger size. The goniometer camera gets Ossila's settings; exposure 3.9 ms is right with the
    backlight on. If the image is too dark, raise the *Exposure*; the window warns about a black or white image.
 2. **Scale** (once per camera size). Lower the needle into view so it comes down from the top edge of the image,
@@ -108,7 +108,7 @@ For porous samples where the drop soaks in. Work in this order:
    **Use as glass reference**. This measures how fast the liquid evaporates, so that evaporation is not counted as
    soaking. It is kept for that liquid. The Soaking tab tells you (in amber) when this is missing.
 3. **Samples**: record each sample, **3 drops or more**; both sides and both directions (MD and CD) if they may
-   differ. Use 640 × 480 at 120 fps when the liquid soaks in within a second or two.
+   differ. Use 640 × 480 (about 99 fps) when the liquid soaks in within a second or two.
 4. **Read the Soaking tab** for each recording:
 
 ![The Soaking tab for a separator (simulated recording)](manual-soaking.png)
